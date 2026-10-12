@@ -728,6 +728,23 @@ window.onload = () => {
   gc.resolveGuide = resolveGuideLines;
   (window as unknown as { __gc: GameContext }).__gc = gc;
 
+  // Dev-only: ?cert=gold|silver|bronze[&name=…][&hearts=1-3] opens straight on
+  // the Q50 certificate, for previewing it and the share card. Local builds only.
+  const devQuery = new URLSearchParams(location.search);
+  const isLocal = location.protocol === "file:" || ["localhost", "127.0.0.1"].includes(location.hostname);
+  if (isLocal && devQuery.has("cert")) {
+    const tierMinutes: Record<string, number> = { gold: 17.7, silver: 24.3, bronze: 31.5 };
+    const st = gc.state;
+    st.currentScreen = "level";
+    st.currentLevel = 50;
+    st.playMode = "play";
+    st.playerName = devQuery.get("name") || "Box";
+    st.lives = Math.max(1, Math.min(3, Number(devQuery.get("hearts")) || 3));
+    st.examFinalMs = (tierMinutes[devQuery.get("cert") || ""] ?? tierMinutes.gold) * 60000;
+    st.darkMode = devQuery.has("dark");
+    st.levelSubPhase = "certificate";
+  }
+
   gameCanvas.addEventListener("wheel", (e) => {
     e.preventDefault();
     gc.wheelDeltaY = e.deltaY;

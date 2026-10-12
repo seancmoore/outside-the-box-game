@@ -1,7 +1,7 @@
 import { GameContext } from '../types';
 import { getTheme }    from '../theme';
 import { getLayout }   from '../layout';
-import { drawButton, drawSeal, drawMedallion, drawHeart, roundRect, uiScale } from '../renderer';
+import { drawButton, drawSeal, drawMedallion, drawHeart, roundRect, uiScale, withTracking } from '../renderer';
 import { say, wrong, inputOpen, levelClock } from './lateralHelpers';
 
 // ── Q50 — Your Name ───────────────────────────────────────────────────────────
@@ -113,8 +113,16 @@ function certificateRect(gc: GameContext) {
   let certH = certW * (CERT_REF_H / CERT_REF_W);
   const maxH = h * 0.60;
   if (certH > maxH) { certW *= maxH / certH; certH = maxH; }
+  // the two button rows under the card (sizes match drawCertificate); on a
+  // short screen, such as a phone held sideways, the card shrinks so they fit
+  const below = h * 0.028 + Math.max(42, h * 0.058) + h * 0.016 + Math.max(36, h * 0.044);
+  const margin = 12;
+  if (certH + below > h - margin * 2) {
+    certH = Math.max(80, h - margin * 2 - below);
+    certW = certH * (CERT_REF_W / CERT_REF_H);
+  }
   const certX = (w - certW) / 2;
-  const certY = (h - certH) / 2 - h * 0.045;
+  const certY = Math.max(margin, Math.min((h - certH) / 2 - h * 0.045, h - margin - below - certH));
   return { x: certX, y: certY, w: certW, h: certH };
 }
 
@@ -385,6 +393,218 @@ function downloadCertificateVideo(gc: GameContext) {
   setTimeout(() => { if (recorder.state !== 'inactive') recorder.stop(); }, 7000);
 }
 
+// ── Share card ────────────────────────────────────────────────────────────────
+// A link-preview shaped (1200x630) image for posting the result: the diploma
+// itself, set slightly askew on the desk like a real sheet of paper, beside a
+// column with the logo, the result in three stat tiles, and the game's address.
+// 'share' is the candidate's own result; 'og' is the site's link preview, the
+// same layout inviting a stranger in, with a placeholder on the diploma.
+
+const GAME_URL  = 'outside-the-box-game.web.app';
+const SHARE_W   = 1200;
+const SHARE_H   = 630;
+
+type ShareMode = 'share' | 'og';
+
+function paintShareCard(gc: GameContext, ctx: CanvasRenderingContext2D, k: number, mode: ShareMode) {
+  const og = mode === 'og';
+  // The og preview is a stranger's first look: always the light booklet, a
+  // placeholder candidate, a gold run on full standing.
+  const state = og
+    ? { ...gc.state, darkMode: false, playerName: 'Your Name Here', examFinalMs: 17 * 60000 + 42000, lives: 3 }
+    : gc.state;
+  const g = { ...gc, ctx, state };
+  const { displayFont, bodyFont, monoFont } = gc;
+  const t = getTheme(state);
+  const tc = TIERS[getTier(state.examFinalMs)];
+  const W = SHARE_W * k, H = SHARE_H * k;
+  const u = (n: number) => n * k;
+
+  // desk: the exam-hall paper, lit from the right where the diploma sits
+  ctx.fillStyle = state.darkMode ? '#15110C' : '#EDE4D0';
+  ctx.fillRect(0, 0, W, H);
+  const glow = ctx.createRadialGradient(W * 0.72, H * 0.45, 0, W * 0.72, H * 0.45, W * 0.62);
+  glow.addColorStop(0, state.darkMode ? 'rgba(212,176,90,0.10)' : 'rgba(255,253,246,0.85)');
+  glow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, H);
+
+  // the diploma, a couple of degrees off square, frozen on the "OtB" face
+  const certW = u(600), certH = certW * (CERT_REF_H / CERT_REF_W);
+  ctx.save();
+  ctx.translate(u(856), u(318));
+  ctx.rotate(-2.2 * Math.PI / 180);
+  paintCertificateCard(g, ctx, { x: -certW / 2, y: -certH / 2, w: certW, h: certH }, { spin: 0 });
+  ctx.restore();
+
+  // ── left column ──
+  const lx = u(64);
+  let y = u(54);
+  if (gc.logoLoaded && gc.logo.naturalWidth) {
+    ctx.save();
+    ctx.shadowColor = 'rgba(60,45,20,0.22)';
+    ctx.shadowBlur = u(8);
+    ctx.shadowOffsetY = u(3);
+    ctx.drawImage(gc.logo, lx - u(6), y, u(104), u(104));
+    ctx.restore();
+  }
+  y += u(146);
+
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = t.accent;
+  ctx.font = `bold ${u(14)}px ${monoFont}`;
+  withTracking(ctx, u(2), () => ctx.fillText('CERTIFICATE OF LATERAL COGNITION', lx, y));
+
+  y += u(62);
+  ctx.fillStyle = t.ink;
+  ctx.font = `bold ${u(56)}px ${displayFont}`;
+  ctx.fillText(og ? 'Can you pass?' : 'I passed.', lx, y);
+
+  y += u(40);
+  ctx.fillStyle = t.inkSoft;
+  ctx.font = `${u(19)}px ${bodyFont}`;
+  const sub = og
+    ? ['A 50-item exam where every obvious', 'answer is a trap.']
+    : ['All 50 items of the Outside-the-Box', 'Thinking Certification.'];
+  sub.forEach((line, i) => ctx.fillText(line, lx, y + i * u(27)));
+
+  // three stat tiles: soft raised cards in the panel colour
+  y += u(66);
+  const tileW = u(132), tileH = u(78), tileGap = u(12);
+  const tiles = og
+    ? [['ITEMS', '50'], ['HEARTS', '3'], ['OBVIOUS', 'Wrong']]
+    : [['TIME', formatTime(state.examFinalMs)], ['TIER', tc.label], ['STANDING', '']];
+  tiles.forEach(([label, value], i) => {
+    const tx = lx + i * (tileW + tileGap);
+    ctx.save();
+    ctx.shadowColor = state.darkMode ? 'rgba(0,0,0,0.35)' : 'rgba(60,45,20,0.10)';
+    ctx.shadowBlur = u(10);
+    ctx.shadowOffsetY = u(3);
+    roundRect(ctx, tx, y, tileW, tileH, u(12));
+    ctx.fillStyle = t.panel;
+    ctx.fill();
+    ctx.restore();
+    roundRect(ctx, tx, y, tileW, tileH, u(12));
+    ctx.strokeStyle = t.panelEdge;
+    ctx.lineWidth = u(1);
+    ctx.stroke();
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = t.fgDim;
+    ctx.font = `bold ${u(11)}px ${monoFont}`;
+    withTracking(ctx, u(1.5), () => ctx.fillText(label, tx + u(14), y + u(24)));
+
+    if (label === 'STANDING') {
+      // the HUD's own hearts: full for the ones still held, faded for the spent
+      for (let h = 0; h < 3; h++) {
+        ctx.save();
+        if (h >= state.lives) ctx.globalAlpha = 0.3;
+        drawHeart(ctx, tx + u(26) + h * u(32), y + u(52), u(24), t.accent, t.accentDeep, u(1));
+        ctx.restore();
+      }
+    } else {
+      ctx.fillStyle = label === 'TIER' ? tc.color : t.ink;
+      const px = fitText(ctx, value, tileW - u(28), u(26), monoFont, 'bold');
+      ctx.font = `bold ${px}px ${monoFont}`;
+      ctx.fillText(value, tx + u(14), y + u(60));
+    }
+  });
+
+  // the invitation and the address
+  y = u(548);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = t.fgMid;
+  ctx.font = `italic ${u(19)}px ${displayFont}`;
+  ctx.fillText(og ? 'Free in your browser. Name required.' : 'Think you can?', lx, y);
+  ctx.fillStyle = t.accent;
+  ctx.font = `bold ${u(23)}px ${monoFont}`;
+  ctx.fillText(GAME_URL, lx, y + u(36));
+}
+
+// Renders the share card into its own canvas. `k` is the pixel density: 2 for
+// a crisp post on a phone, 1 for the og:image file.
+function renderShareCanvas(gc: GameContext, mode: ShareMode, k: number): HTMLCanvasElement | null {
+  const off = document.createElement('canvas');
+  off.width = SHARE_W * k;
+  off.height = SHARE_H * k;
+  const octx = off.getContext('2d');
+  if (!octx) return null;
+  paintShareCard(gc, octx, k, mode);
+  return off;
+}
+
+function shareText(gc: GameContext): string {
+  const { state } = gc;
+  const tc = TIERS[getTier(state.examFinalMs)];
+  return `I passed the Outside-the-Box Thinking Certification: ${tc.label.toLowerCase()} tier, ` +
+    `${formatTime(state.examFinalMs)}, ${state.lives} of 3 hearts left. Think you can? https://${GAME_URL}`;
+}
+
+// The share image is rendered ahead of time, as soon as the certificate is up,
+// so the SHARE press can hand it to navigator.share() straight away: Safari
+// drops the user-gesture permission if the press has to wait on an async encode.
+const share50 = { key: '', blob: null as Blob | null, note: '', noteUntil: 0 };
+
+function shareKey(gc: GameContext): string {
+  const s = gc.state;
+  return [s.playerName, s.darkMode, s.examFinalMs, s.lives, serialNo50].join('|');
+}
+
+function prepareShareImage(gc: GameContext) {
+  const key = shareKey(gc);
+  if (share50.key === key) return;
+  share50.key = key;
+  share50.blob = null;
+  const canvas = renderShareCanvas(gc, 'share', 2);
+  // toBlob throws on a tainted canvas (the game opened from file://); SHARE then
+  // falls back to a fresh render at press time, which fails the same quiet way.
+  try { canvas?.toBlob((blob) => { if (share50.key === key) share50.blob = blob; }, 'image/png'); } catch { /* see above */ }
+}
+
+function flashShareNote(gc: GameContext, note: string) {
+  share50.note = note;
+  share50.noteUntil = performance.now() + 2600;
+  gc.render();
+}
+
+function saveBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+// SHARE: the phone's share sheet with the image attached where the browser
+// supports sharing files (phones, Safari, Edge); otherwise the image is saved
+// and the line with the link is copied, ready to paste into a post.
+function shareCertificate(gc: GameContext) {
+  prepareShareImage(gc);
+  const blob = share50.blob;
+  const fileName = `OtB-Certificate-${sanitizeFileName(gc.state.playerName)}.png`;
+  const text = shareText(gc);
+  const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
+
+  if (blob && typeof nav.share === 'function') {
+    const data: ShareData = { files: [new File([blob], fileName, { type: 'image/png' })], title: 'Outside-the-Box Thinking Certification', text };
+    if (nav.canShare?.(data)) {
+      nav.share(data).catch(() => { /* closed the sheet: nothing to do */ });
+      return;
+    }
+  }
+
+  const save = (b: Blob | null) => { if (b) saveBlob(b, fileName); };
+  if (blob) save(blob);
+  else try { renderShareCanvas(gc, 'share', 2)?.toBlob(save, 'image/png'); } catch { return; }
+  const copied = navigator.clipboard?.writeText(text);
+  if (copied) copied.then(() => flashShareNote(gc, 'IMAGE SAVED · LINK COPIED'), () => flashShareNote(gc, 'IMAGE SAVED'));
+  else flashShareNote(gc, 'IMAGE SAVED');
+}
+
 // Shrinks font px until the text fits maxW.
 function fitText(ctx: CanvasRenderingContext2D, text: string, maxW: number, px: number, family: string, weight = ''): number {
   ctx.font = `${weight} ${px}px ${family}`;
@@ -487,27 +707,34 @@ function drawCertificate(gc: GameContext) {
   const cx = certX + certW / 2;
 
   paintCertificateCard(gc, ctx, rect, { spin: 0.9 });
+  prepareShareImage(gc);
 
-  // main menu
-  const btnW = Math.min(certW * 0.34, 240);
+  // two rows of two: share + main menu, then the two plain downloads
+  const rowW = Math.min(certW, 520);
+  const gap  = 14 * s;
+  const colW = (rowW - gap) / 2;
+  const leftX = cx - rowW / 2, rightX = cx + gap / 2;
   const btnH = Math.max(42, h * 0.058);
   const menuY = certY + certH + h * 0.028;
-  drawButton(gc, 'MAIN MENU', cx - btnW / 2, menuY, btnW, btnH, () => {
+  const narrow = colW < 200;
+  const noteUp = performance.now() < share50.noteUntil;
+  drawButton(gc, noteUp ? share50.note : narrow ? 'SHARE' : 'SHARE CERTIFICATE', leftX, menuY, colW, btnH, () => {
+    shareCertificate(gc);
+  }, noteUp ? 13 : 18);
+  drawButton(gc, 'MAIN MENU', rightX, menuY, colW, btnH, () => {
     state.currentScreen = 'mainmenu';
     state.examStartTime = 0;
     gc.resetPlayerName();
     gc.render();
   }, 18);
 
-  // download the card — a still image always, or a short clip of the spin
-  const dlW  = Math.min(certW * 0.30, 210);
-  const dlH  = Math.max(36, h * 0.044);
-  const dlY  = menuY + btnH + h * 0.016;
-  const dlGap = 14 * s;
-  drawButton(gc, 'DOWNLOAD IMAGE', cx - dlW - dlGap / 2, dlY, dlW, dlH, () => {
+  // download the card: a still image always, or a short clip of the spin
+  const dlH = Math.max(36, h * 0.044);
+  const dlY = menuY + btnH + h * 0.016;
+  drawButton(gc, narrow ? 'IMAGE' : 'DOWNLOAD IMAGE', leftX, dlY, colW, dlH, () => {
     downloadCertificateImage(gc);
   }, 13);
-  drawButton(gc, recording50 ? 'RECORDING…' : 'DOWNLOAD VIDEO', cx + dlGap / 2, dlY, dlW, dlH, () => {
+  drawButton(gc, recording50 ? 'RECORDING…' : narrow ? 'VIDEO' : 'DOWNLOAD VIDEO', rightX, dlY, colW, dlH, () => {
     downloadCertificateVideo(gc);
   }, 13);
 }
@@ -704,5 +931,8 @@ export const drawLevel50 = (gc: GameContext) => {
     tier: getTier(state.examFinalMs),
     standing: state.lives,
     phase: state.levelSubPhase,
+    shareText: shareText(gc),
   };
+  if (dev.__gc) (dev.__gc as Record<string, unknown>).shareCard =
+    (mode: ShareMode = 'share', k = 2) => renderShareCanvas(gc, mode, k)?.toDataURL('image/png');
 };

@@ -14,7 +14,8 @@ const outDir = path.resolve(__dirname, 'out');
 fs.mkdirSync(outDir, { recursive: true });
 
 (async () => {
-  const browser = await chromium.launch();
+  // Falls back to the system Edge when Playwright's own Chromium isn't downloaded.
+  const browser = await chromium.launch().catch(() => chromium.launch({ channel: 'msedge' }));
   const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
   const pageErrors = [], consoleErrors = [], failedRequests = [];
   page.on('pageerror', e => pageErrors.push(e.message));

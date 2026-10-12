@@ -31,7 +31,7 @@ export const roundRect = (
 };
 
 // Run a draw callback with canvas letter-spacing applied, then restore it.
-const withTracking = (ctx: CanvasRenderingContext2D, px: number, fn: () => void) => {
+export const withTracking = (ctx: CanvasRenderingContext2D, px: number, fn: () => void) => {
   const c = ctx as unknown as { letterSpacing?: string };
   const prev = c.letterSpacing;
   try { c.letterSpacing = `${px}px`; } catch { /* unsupported — ignore */ }
