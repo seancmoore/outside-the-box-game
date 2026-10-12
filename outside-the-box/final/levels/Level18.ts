@@ -6,17 +6,20 @@ import { wrong, freshEntry, drawWinScreen, say, inputOpen, levelClock, drawTypeI
 
 // ── Q18 — Binary Logic ────────────────────────────────────────────────────────
 // The paper shows "1 + 1 = ?" and a blank to write in. Nothing else: the base-2
-// fine print is gone, and so are the multiple-choice buttons. The only clue is
-// the examiner mentioning in passing that the machine grading this counts in
-// binary. Type 2 (the conventional answer) and it slams INCORRECT. Type 10 and
-// it passes, because that is the only language the grader speaks.
+// fine print is gone, and so are the multiple-choice buttons. The opening line
+// only gestures at there being more than one way to write the answer, rather
+// than naming binary outright — the explicit "the machine counts in binary"
+// nudge is held back as a later miss-ladder rung instead. Type 2 (the
+// conventional answer) and it slams INCORRECT. Type 10 and it passes, because
+// that is the only language the grader speaks.
 
 const CORRECT18 = '10';
 const MAXLEN18  = 6;
 
 const OPENING = [
   'Simple arithmetic. One plus one.',
-  '...the machine that grades this counts in binary, by the way. Not that it matters.',
+  'Well. Just how many ways can you add one and one?',
+  'Everything on this exam is binary, when you get down to it. Correct, or incorrect. I sometimes wish the rest of life were that simple.',
 ];
 
 const LINE_TWO      = 'Two. The machine disagrees. It only knows two digits.';
@@ -96,7 +99,7 @@ export const drawLevel18 = (gc: GameContext) => {
     fails18 = 0;
     clock18.last = 0;
     clock18.elapsed = 0;
-    say(gc, OPENING[0], OPENING[1]);
+    say(gc, ...OPENING);
   }
 
   // pause-aware level clock: nothing on this item is timed, but it must freeze

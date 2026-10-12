@@ -2,7 +2,7 @@ import { GameContext } from '../types';
 import { getTheme }    from '../theme';
 import { getLayout }   from '../layout';
 import { uiScale, getGuideTextMetrics } from '../renderer';
-import { freshEntry, drawWinScreen, say, inputOpen, levelClock } from './lateralHelpers';
+import { freshEntry, drawWinScreen, say, inputOpen, levelClock, wrong } from './lateralHelpers';
 
 // ── Q41 — Reply ───────────────────────────────────────────────────────────────
 // The paper says only "Reply to the examiner." There are no buttons and no field.
@@ -10,13 +10,33 @@ import { freshEntry, drawWinScreen, say, inputOpen, levelClock } from './lateral
 // blinked at the end of his every remark for forty questions is, today, a live
 // text cursor. Click his remarks (or just start typing) and the letters appear
 // inside his remarks as dictation; press Enter and he writes it down as his own.
-// Any answer works; the content was never the point. Nothing here costs a heart.
+// It is graded after all: at least twenty characters' worth of real words, and
+// none of those words may use a letter from his own name — EXAMINER. Nothing on
+// the paper says so; the remarks only hint at it, and only after a failed
+// attempt or two, escalating toward the literal rule if the candidate keeps
+// missing it. A failed attempt costs a heart, same as anywhere else on the exam.
 // Replaces the D L R O W anagram.
 
 const LINE     = 'State your answer. I am listening.';
 const RECEIVED = 'Received. I have written it down as my own.';
-const EMPTY    = 'Say something. Anything. It is not graded.';
+const EMPTY    = 'Say something. Anything.';
 const MAX_LEN  = 60;
+const MIN_CLEAN_CHARS = 20;
+
+// The letters that can't appear in any word that is to count — his own name.
+const BANNED_LETTERS = Array.from(new Set('examiner'.split('')));
+
+// A "real word" here just means alphabetic and at least two letters long —
+// no digits, no punctuation, no single-letter keysmash filler.
+const isCleanWord = (tok: string): boolean => {
+  if (!/^[A-Za-z]{2,}$/.test(tok)) return false;
+  const lower = tok.toLowerCase();
+  return !BANNED_LETTERS.some((ch) => lower.includes(ch));
+};
+
+// Sum of the lengths of the words that actually count toward the total.
+const cleanCharCount = (text: string): number =>
+  text.split(/\s+/).filter(isCleanWord).reduce((sum, w) => sum + w.length, 0);
 
 // paper clicks → ladder rung (the paper is the conventional place to look)
 const LADDER: Record<number, string> = {
@@ -25,8 +45,17 @@ const LADDER: Record<number, string> = {
   7: 'Click my remarks. Type anything. Press Enter.',
 };
 
+// Enter, but rejected → ladder rung, escalating from vague to spelled-out.
+const FAIL_LADDER: Record<number, string> = {
+  1: 'That was brief. And I am not sure all of it was a real word.',
+  2: 'Some of those letters look... familiar. Too familiar, actually.',
+  3: 'Spell it however you like. Just never with my letters.',
+  4: 'E. X. A. M. I. N. R. None of those. Twenty real characters, the rest.',
+};
+
 let text41    = '';
 let clicks41  = 0;
+let fails41   = 0;
 let hint41    = '';
 let focused41 = false;   // the caret blinks faster once the remarks have the cursor
 let ready41   = false;   // his opening line has finished typing; the caret is yours
@@ -58,6 +87,13 @@ const ensureListeners41 = (gc: GameContext) => {
       e.preventDefault();
       focused41 = true;
       if (!text41.trim()) { remark(gc, EMPTY); gc.render(); return; }
+      if (cleanCharCount(text41) < MIN_CLEAN_CHARS) {
+        fails41++;
+        wrong(gc);
+        remark(gc, FAIL_LADDER[Math.min(fails41, 4)]);
+        gc.render();
+        return;
+      }
       sent41 = true;
       sentAt41 = clock41.elapsed;
       remark(gc, RECEIVED);
@@ -172,7 +208,7 @@ export const drawLevel41 = (gc: GameContext) => {
   }
 
   if (freshEntry(gc)) {
-    text41 = ''; clicks41 = 0; hint41 = ''; focused41 = false; ready41 = false;
+    text41 = ''; clicks41 = 0; fails41 = 0; hint41 = ''; focused41 = false; ready41 = false;
     sent41 = false; sentAt41 = 0; dictX41 = 0; caretX41 = 0; caretY41 = 0;
     clock41.last = 0; clock41.elapsed = 0;
     state.guideReveal = 0;
@@ -213,6 +249,8 @@ export const drawLevel41 = (gc: GameContext) => {
     text: text41,
     hint: hint41,
     clicks: clicks41,
+    fails: fails41,
+    cleanChars: cleanCharCount(text41),
     focused: focused41,
     ready: ready41,
     sent: sent41,

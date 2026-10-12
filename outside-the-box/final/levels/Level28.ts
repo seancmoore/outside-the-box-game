@@ -12,11 +12,13 @@ import { freshEntry, drawWinScreen, say, inputOpen, levelClock } from './lateral
 // honest bullet-dodge between two trick questions. The trap is standing under him
 // when he fires. Every shot that lands on you slams INCORRECT and costs a heart.
 //
-// Numbers are unchanged from the original build: 110 boss HP, 5 damage a hit (22
-// hits), phases at 75 and 40 HP, 0.42s of blinking invincibility after a hit.
-// Only the palette moved: the neon phase colours are now fountain-pen ink.
+// HP, damage, phase thresholds, and i-frames are unchanged from the original
+// build: 110 boss HP, 5 damage a hit (22 hits), phases at 75 and 40 HP, 0.42s
+// of blinking invincibility after a hit. The palette moved to fountain-pen ink.
+// Fire rate was tightened up across all three phases to make him a tougher
+// fight — see BOSS_FIRE_INTERVALS below.
 
-// ── Tunables (do not retune: the mock is verbatim from these) ─────────────────
+// ── Tunables ────────────────────────────────────────────────────────────────
 const PLAYER_W           = 40;
 const PLAYER_H           = 26;
 const PLAYER_SPEED       = 380;     // px/s
@@ -35,7 +37,9 @@ const BOSS_Y_OFFSET      = 36;      // arena-relative top of the monitor
 
 // Per-phase boss tuning: [phase 0 (HP 110→80), phase 1 (75→45), phase 2 (40→0)]
 const BOSS_BULLET_SPEEDS  = [275, 360, 440];
-const BOSS_FIRE_INTERVALS = [1.00, 0.75, 0.55];
+// Tightened from the original [1.00, 0.75, 0.55] — Frodrick opens fire noticeably
+// sooner in every phase, so there's less standing-around time between volleys.
+const BOSS_FIRE_INTERVALS = [0.70, 0.50, 0.35];
 const BOSS_OSC_HZ         = [0.45, 0.72, 1.10];   // horizontal sweep speed
 
 // Fountain-pen ink in place of the source's neon.

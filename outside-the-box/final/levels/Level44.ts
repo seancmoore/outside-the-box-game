@@ -10,8 +10,11 @@ import { drawChoice, wrong, freshEntry, drawWinScreen, say, inputOpen, levelCloc
 // Q21, pressing OVERRIDE at Q20, refusing the child at Q8. Three suspect cards
 // (ADA, BEN, CLEO) carry alibis; accusing any of them costs a heart. There is no
 // fourth card. The fourth suspect is the line at the bottom of the form:
-// "I CONFESS.  SIGNED: ____".  Click it and the registered name signs itself in
-// oxblood, dated today, and the paper is stamped CONFESSED.
+// "I CONFESS.  SIGNED: ____".  Click it and it signs itself "Candidate" in
+// oxblood, dated today, and the paper is stamped CONFESSED. Deliberately NOT the
+// player's registered name — Q50's whole point is testing whether the candidate
+// remembers the name they gave at the start, and this would have handed them the
+// answer six questions early.
 // Replaces the stapler deduction.
 
 const HEAD = 'CASE FILE #22  ·  INCIDENT REPORT';
@@ -73,14 +76,14 @@ export const drawLevel44 = (gc: GameContext) => {
   const cx = w / 2;
 
   if (state.levelSubPhase === 'win') {
-    drawWinScreen(gc, 'CONFESSED.', 'Signed in your own name. The Institute has kept it since Question 1.', 45);
+    drawWinScreen(gc, 'CONFESSED.', 'Signed as Candidate. Your real name is a different question.', 45);
     return;
   }
   if (freshEntry(gc)) {
     fails44 = 0; signedAt44 = -1; sigProgress44 = 0; won44 = false;
     hintAt44 = -1; hintText44 = '';
     clock44.last = 0; clock44.elapsed = 0;
-    sigName44 = (state.playerName || '').trim() || 'Candidate';
+    sigName44 = 'Candidate';
     try {
       dateStr44 = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
     } catch { dateStr44 = ''; }

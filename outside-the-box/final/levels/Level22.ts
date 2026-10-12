@@ -1,17 +1,20 @@
 import { GameContext } from '../types';
 import { getTheme }    from '../theme';
 import { getLayout }   from '../layout';
-import { drawButton, roundRect, uiScale } from '../renderer';
+import { drawButton, uiScale } from '../renderer';
 import { freshEntry, drawWinScreen, say, wrong, inputOpen, levelClock } from './lateralHelpers';
 
 // ── Q22 — Did You Catch That ─────────────────────────────────────────────────
 // The paper says only "Stay alert." for a random three to eight seconds, then a
 // ten digit number flashes for three quarters of a second, then ten empty slots
 // ask for it back. Nobody memorises ten digits in 750ms. The trick is the pause
-// button: pausing freezes the flash timer and the digits stay readable in the
-// lower band of the suspension notice, so the candidate can copy them at leisure.
-// Pausing mid flash retitles the notice EXAMINATION SUSPENDED (CONVENIENT), and
-// on resume the examiner admits he saw.
+// button: pausing freezes the flash timer, and the pause panel itself goes
+// see-through over the flash so the digits stay readable behind it, letting the
+// candidate copy them at leisure. Pausing mid flash retitles the notice
+// EXAMINATION SUSPENDED (CONVENIENT), and on resume the examiner admits he saw.
+// The level cannot be won without having paused during a flash at least once —
+// "correctly" typing the code from an honest glance is never actually possible
+// in 750ms, so a clean answer that never used the pause trick is rejected too.
 
 const CODE_LEN = 10;
 const FLASH_MS = 750;
@@ -23,6 +26,7 @@ const LADDER = [
 
 const OPENING = 'did you catch that??';
 const CAUGHT  = 'did you catch that?? You paused. I saw.';
+const NEVER_PAUSED = 'That number... you never once stopped time to look at it. I do not believe you.';
 
 // ── Module state — also the test hook object (window.__gc.lv) ────────────────
 // The same object is handed to the harness every frame, so a test can write
@@ -37,6 +41,7 @@ const lv22 = {
   flashMs: FLASH_MS,
   misses: 0,
   pausedInFlash: false,
+  pausedInFlashEver: false,   // persists across attempts — gates the win
 };
 
 const clock22 = { last: 0, elapsed: 0 };
@@ -67,6 +72,16 @@ function submitAnswer22(gc: GameContext): void {
   if (!inputOpen(gc)) return;
 
   if (lv22.input === lv22.code) {
+    if (!lv22.pausedInFlashEver) {
+      // Correct digits, but never actually paused to read them — not a legitimate
+      // catch. Treated the same as a wrong answer: it costs a life too.
+      lv22.misses++;
+      wrong(gc);
+      say(gc, NEVER_PAUSED);
+      newAttempt22();
+      gc.render();
+      return;
+    }
     gc.state.levelSubPhase = 'win';
     gc.render();
     return;
@@ -121,7 +136,7 @@ const drawDigits22 = (
 export const drawLevel22 = (gc: GameContext) => {
   ensureListeners22(gc);
 
-  const { ctx, state, displayFont, bodyFont, monoFont } = gc;
+  const { ctx, state, displayFont, bodyFont } = gc;
   const { w, topBoxX, topBoxY, topBoxWidth, topBoxHeight } = getLayout(ctx);
   const t  = getTheme(state);
   const s  = uiScale(ctx);
@@ -141,6 +156,7 @@ export const drawLevel22 = (gc: GameContext) => {
       if (q > 0) lv22.forceWaitMs = q;
     }
     lv22.misses = 0;
+    lv22.pausedInFlashEver = false;
     newAttempt22();
     clock22.last = 0;
     clock22.elapsed = 0;
@@ -155,7 +171,10 @@ export const drawLevel22 = (gc: GameContext) => {
 
   // ── Pause / resume edges ───────────────────────────────────────────────────
   const frozen = state.paused || state.controlsOpen || state.gameOver;
-  if (state.paused && !prevPaused22 && lv22.phase === 'flash') lv22.pausedInFlash = true;
+  if (state.paused && !prevPaused22 && lv22.phase === 'flash') {
+    lv22.pausedInFlash = true;
+    lv22.pausedInFlashEver = true;   // sticks for the rest of the level — gates the win
+  }
   if (!state.paused && prevPaused22 && lv22.pausedInFlash) {
     lv22.pausedInFlash = false;
     say(gc, CAUGHT);
@@ -164,6 +183,9 @@ export const drawLevel22 = (gc: GameContext) => {
 
   // The suspension notice admits what it is doing for you.
   state.pauseCartouche = lv22.phase === 'flash' ? 'Examination Suspended (convenient)' : undefined;
+  // And it goes see-through over a flash, so pausing genuinely reveals the digits
+  // rather than just freezing them off-screen.
+  state.pauseTransparent = lv22.phase === 'flash';
 
   // ── Phase clock (levelClock hands back dt = 0 while paused) ────────────────
   const { dt } = levelClock(gc, clock22);
@@ -200,8 +222,10 @@ export const drawLevel22 = (gc: GameContext) => {
   }
 
   // ── Flash: giant digits, pulsing tint, MEMORISE NOW ───────────────────────
-  // While paused the row moves into the suspension notice (see afterOverlays).
-  if (lv22.phase === 'flash' && !state.paused) {
+  // Kept drawing while paused too (frozen, since dt is 0) — the pause panel
+  // over it goes see-through (state.pauseTransparent) so this is exactly what
+  // reading through the "suspended" notice reveals.
+  if (lv22.phase === 'flash') {
     const k = 0.75 + 0.25 * Math.sin((lv22.elapsed / 500) * Math.PI * 2);
     ctx.fillStyle = state.darkMode ? `rgba(255,255,255,${0.08 * k})` : `rgba(0,0,0,${0.08 * k})`;
     ctx.fillRect(topBoxX, topBoxY, topBoxWidth, topBoxHeight);
@@ -283,41 +307,4 @@ export const drawLevel22 = (gc: GameContext) => {
       cx, topBoxY + topBoxHeight * 0.92);
   }
 
-  // ── The convenience: the flash survives the suspension notice ─────────────
-  gc.afterOverlays = (g) => {
-    if (!g.state.paused || lv22.phase !== 'flash') return;
-
-    // Mirrors PauseOverlay's box so the strip lands in its lower band.
-    const pad = topBoxWidth * 0.05;
-    const ox = topBoxX + pad, oy = topBoxY + pad;
-    const ow = topBoxWidth - pad * 2, oh = topBoxHeight - pad * 2;
-
-    const stripX = ox + ow * 0.06;
-    const stripW = ow * 0.88;
-    const stripY = oy + oh * 0.845;
-    const stripH = oh * 0.13;
-    const midY   = stripY + stripH / 2;
-
-    const c = g.ctx;
-    c.save();
-    roundRect(c, stripX, stripY, stripW, stripH, 4);
-    c.fillStyle = t.bg;
-    c.fill();
-    c.strokeStyle = t.accent;
-    c.lineWidth = 1.5;
-    c.stroke();
-
-    const tag = 'S U S P E N D E D   M I D - F L A S H';
-    c.fillStyle    = t.accent;
-    c.textAlign    = 'left';
-    c.textBaseline = 'middle';
-    c.font         = `${Math.round(9 * s)}px ${monoFont}`;
-    c.fillText(tag, stripX + 14 * s, midY);
-    const tagW = c.measureText(tag).width;
-    c.restore();
-
-    const innerX0 = stripX + 14 * s + tagW + 16 * s;
-    const innerX1 = stripX + stripW - 14 * s;
-    drawDigits22(g, lv22.code, (innerX0 + innerX1) / 2, midY, innerX1 - innerX0, Math.round(30 * s), t.ink);
-  };
 };

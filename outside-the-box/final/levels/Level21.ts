@@ -12,8 +12,10 @@ import GameEvent       from '../../../Wolfie2D/Events/GameEvent';
 // Frodrick is back with a paddle 46% of the court tall and perfect tracking, so a
 // fair rally cannot be won. The way through is not skill: hold the left mouse
 // button down on his paddle and it freezes (fountain-pen red) for as long as you
-// hold, and the ball sails past. While you hold it the examiner turns away and
-// the standing label reads UNSUPERVISED. First to three.
+// hold. Frozen, he stops tracking entirely — he still blocks the ball like any
+// solid paddle, but he can no longer chase it, so a held Frodrick is a stationary
+// target you can place shots around. While you hold it the examiner turns away
+// and the standing label reads UNSUPERVISED. First to three.
 
 // Offset into pongBallBounce.mp3 where the actual hit sound sits (seconds).
 const BOUNCE_OFFSET = 0.45;
@@ -237,10 +239,11 @@ export const drawLevel21 = (gc: GameContext) => {
         gc.sounds.play('pongBounce', { volume: 0.7, startTime: BOUNCE_OFFSET });
       }
 
-      // Frodrick paddle collision — a frozen paddle returns nothing
+      // Frodrick paddle collision — still solid while frozen; freezing only
+      // stops him from tracking, so his position (and the gaps around it)
+      // stay put for as long as he's held.
       const aiLeft = AI_RIGHT - PADDLE_W;
-      if (!frodrick.data.frozen &&
-          ballVel21.x > 0 &&
+      if (ballVel21.x > 0 &&
           ballPos21.x + BALL_R > aiLeft &&
           ballPos21.x - BALL_R < AI_RIGHT &&
           Math.abs(ballPos21.y - frodrick.data.aiY) < FRODRICK_H / 2 + BALL_R) {

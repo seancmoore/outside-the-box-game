@@ -10,11 +10,13 @@ import { drawChoice, wrong, freshEntry, drawWinScreen, say, inputOpen, levelCloc
 // in the dark does nothing. Q25 veterans will open the pause menu and flip DARK
 // MODE: that changes the hall and not the paper, and the examiner says so. The
 // switch is the lightbulb in the logo, which has been sitting above every question
-// since Q1 and has never been touchable. It is drawn off (greyed) and blinks once
-// after fifteen idle seconds. Click it: a soft flash, the paper lights to ivory,
-// the instruction reads PRESS THE THIRD BUTTON, and C wins. A, B and D cost a
-// heart once the lights are on. Replaces the old dark-mode reveal, which repeated
-// Q25's theme-toggle trick.
+// since Q1 and has never been touchable. It is drawn as a faint, low-contrast
+// shadow on the logo — not an obvious dark blob — and blinks once after fifteen
+// idle seconds. The hint ladder nudges toward "look up" without ever naming the
+// bulb outright, so the discovery stays the player's. Click it: a soft flash,
+// the paper lights to ivory, the instruction reads PRESS THE THIRD BUTTON, and C
+// wins. A, B and D cost a heart once the lights are on. Replaces the old
+// dark-mode reveal, which repeated Q25's theme-toggle trick.
 
 const LABELS = ['A', 'B', 'C', 'D'];
 const ANSWER_INDEX = 2;               // the third button
@@ -23,7 +25,7 @@ const DARK_PRESS_1 = 'You cannot see what you are pressing. Neither can I.';
 const DARK_PRESS_N = 'It is dark in here. The hall is fine. The paper is not.';
 const HALL_LINE    = 'That changed the hall. It did not change the paper.';
 const HINT_20      = 'Somebody turned the light off. It is above you.';
-const HINT_40      = 'The bulb. In the logo. Yes, that one.';
+const HINT_40      = 'Still nothing. Whatever needs waking is still up there.';
 const LIT_LINE     = '...There it is. Third button, candidate.';
 const MISS_LINE    = 'Third. The one after the second.';
 
@@ -229,8 +231,10 @@ export const drawLevel31 = (gc: GameContext) => {
     if (capA > 0.002) {
       const gx = g.ctx;
       gx.save();
-      gx.globalAlpha = capA;
-      gx.fillStyle = 'rgba(52,50,62,0.62)';
+      // Low-contrast and low-alpha on purpose: this should read as a shadow on
+      // the logo, not an obvious dark blob calling out where to click.
+      gx.globalAlpha = capA * 0.55;
+      gx.fillStyle = g.state.darkMode ? 'rgba(70,68,80,0.5)' : 'rgba(60,58,70,0.4)';
       gx.beginPath();
       gx.ellipse(b.x + b.w / 2, b.y + b.h / 2, b.w / 2, b.h / 2, 0, 0, Math.PI * 2);
       gx.fill();

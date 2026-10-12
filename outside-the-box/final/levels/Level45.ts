@@ -7,17 +7,20 @@ import { drawChoice, freshEntry, drawWinScreen, say, inputOpen, levelClock } fro
 // ── Q45 — Runaway Submit ──────────────────────────────────────────────────────
 // "Press SUBMIT to continue." The button flees the cursor (150 px radius, speed 9)
 // and it screams every time you reach for it. It cannot be cornered straight away:
-// a STAMINA meter drains only while you are actually pushing it around, and until
-// you have chased it ~2600 px, pinning it against an edge just makes it bolt to a
-// fresh spot along the wall. Once winded it can be herded into a corner, where it
-// gives up ("OK OK FINE") and can finally be clicked. Nothing here costs a heart:
-// the trap is chasing it head-on forever, and the price is time.
+// an unseen STAMINA reserve drains only while the mouse button is actually held
+// down on a chase — idly hovering near it costs it nothing — and until you have
+// pressed it through ~3400 px of that kind of chasing, pinning it against an edge
+// just makes it bolt to a fresh spot along the wall. There is no meter shown for
+// any of this; the only feedback is the examiner's remarks and the button's own
+// behavior. Once winded it can be herded into a corner, where it gives up
+// ("OK OK FINE") and can finally be clicked. Nothing here costs a heart: the
+// trap is chasing it head-on forever, and the price is time.
 
 const FLEE_RADIUS = 150;
 const FLEE_SPEED  = 9;
 const BTN_W   = 150;
 const BTN_H   = 52;
-const STAMINA = 2600;      // px of button flight before it is winded
+const STAMINA = 3400;      // px of held-down chasing before it is winded
 const BOLT_FREEZE = 0.26;  // s the button is untouchable after a bolt
 const BOLT_ANIM   = 0.22;  // s the bolt slide takes to land
 const SCREAM_GAP  = 0.9;   // s cooldown on the scream
@@ -38,21 +41,8 @@ let sheep45 = false;
 let face45: 'up' | 'down' | 'left' | 'right' = 'down';
 const clock45 = { last: 0, elapsed: 0 };
 
-// Mono label with tracking (the mock's letter-spacing: .16em), drawn from the left.
-const drawTracked = (
-  gc: GameContext, text: string, x: number, y: number, track: number,
-) => {
-  const { ctx } = gc;
-  let cx = x;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text.charAt(i);
-    ctx.fillText(ch, cx, y);
-    cx += ctx.measureText(ch).width + track;
-  }
-};
-
 export const drawLevel45 = (gc: GameContext) => {
-  const { ctx, state, displayFont, bodyFont, monoFont } = gc;
+  const { ctx, state, displayFont, bodyFont } = gc;
   const { w, topBoxX, topBoxY, topBoxWidth, topBoxHeight } = getLayout(ctx);
   const t  = getTheme(state);
   const s  = uiScale(ctx);
@@ -143,12 +133,16 @@ export const drawLevel45 = (gc: GameContext) => {
         if (escapes45 > 1 && escapes45 % 3 === 0) say(gc, 'Escapes: ' + escapes45 + '.');
       }
       if (!winded45) {
-        chased45 += moved;
-        if (chased45 >= STAMINA * s) {
-          winded45 = true;
-          say(gc, 'It is winded. Now it can be cornered.');
-        } else if (blocked && dist < R * 0.7) {
-          bolt();
+        // Only an actual press-and-chase tires it out — hovering near it for
+        // free (no mouse button down) costs it nothing.
+        if (gc.mouseDown) {
+          chased45 += moved;
+          if (chased45 >= STAMINA * s) {
+            winded45 = true;
+            say(gc, 'It is winded. Now it can be cornered.');
+          } else if (blocked && dist < R * 0.7) {
+            bolt();
+          }
         }
       } else {
         const nowCornered = moved < 0.4 * s && dist < R * 0.6;
@@ -178,28 +172,9 @@ export const drawLevel45 = (gc: GameContext) => {
   ctx.font = `${Math.round(14 * s)}px ${bodyFont}`;
   ctx.fillText('...if you can. Some things run when you reach for them.', cx, topBoxY + topBoxHeight * 0.21, topBoxWidth * 0.9);
 
-  // ── stamina meter (top right of the paper) ────────────────────────────────
-  const stW = 150 * s;
-  const stX = topBoxX + topBoxWidth - 22 * s - stW;
-  const stY = topBoxY + 14 * s;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  ctx.font = `${Math.round(9 * s)}px ${monoFont}`;
-  ctx.fillStyle = winded45 ? t.danger : t.fgDim;
-  drawTracked(gc, winded45 ? 'BUTTON WINDED' : 'BUTTON STAMINA', stX, stY, 1.44 * s);
-  const barY = stY + 15 * s, barH = 7 * s;
-  ctx.fillStyle = t.bg;
-  ctx.fillRect(stX, barY, stW, barH);
-  const frac = Math.max(0, 1 - chased45 / (STAMINA * s));
-  if (frac > 0) {
-    ctx.fillStyle = winded45 ? t.danger : t.pass;
-    ctx.fillRect(stX + 1.5 * s, barY + 1.5 * s, (stW - 3 * s) * frac, barH - 3 * s);
-  }
-  ctx.strokeStyle = t.stroke;
-  ctx.lineWidth = 1.5 * s;
-  ctx.strokeRect(stX, barY, stW, barH);
-
   // ── the button ────────────────────────────────────────────────────────────
+  // No stamina meter drawn here on purpose — the only feedback the candidate
+  // gets is the examiner's remarks and whether the button is still bolting.
   // A bolt slides rather than teleports; the hit area rides the drawn position.
   let drawX = bx45, drawY = by45;
   const bp = (elapsed - boltAt45) / BOLT_ANIM;

@@ -233,12 +233,15 @@ export const drawLevel23 = (gc: GameContext) => {
   ctx.fillText('Click cells to cycle T / F / blank', cx, tblY + tblH + 14 * s);
 
   // ── Conclusions ───────────────────────────────────────────────────────────
+  // Sized as fractions of topBoxHeight (not fixed uiScale px) so the two rows
+  // always land inside the play area instead of overflowing its bottom edge
+  // on short/cramped viewports where topBoxHeight doesn't grow with s.
   const tableOK  = allFilled(cells23) && allCorrect(cells23);
   const optBtnW  = topBoxWidth * 0.44;
-  const optBtnH  = 34 * s;
+  const optBtnH  = topBoxHeight * 0.088;
   const optGapX  = topBoxWidth * 0.03;
-  const optGapY  = 7 * s;
-  const optY0    = topBoxY + topBoxHeight * 0.79;
+  const optGapY  = topBoxHeight * 0.018;
+  const optY0    = topBoxY + topBoxHeight * 0.77;
 
   OPTS.forEach((opt, i) => {
     const col = i % 2;
@@ -249,7 +252,7 @@ export const drawLevel23 = (gc: GameContext) => {
     drawChoice(gc, opt.text, bx, by, optBtnW, optBtnH, () => {
       if (!inputOpen(gc)) return;
       if (!opt.right) { say(gc, REREAD); wrong(gc); return; }
-      if (!tableOK)   { say(gc, NUDGE); gc.render(); return; }
+      if (!tableOK)   { say(gc, NUDGE); wrong(gc); return; }
       triggerStamp(gc, 'CASE CLOSED', t.pass);
       state.winChimeFor = state.currentLevel;   // keep CASE CLOSED, not CORRECT
       gc.sounds.ui('chime');

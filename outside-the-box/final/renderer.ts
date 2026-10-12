@@ -343,7 +343,7 @@ export const drawFxStamp = (gc: GameContext) => {
 // corner ticks, and an optional title cartouche set into the top rule.
 export const drawDocumentBox = (
   gc: GameContext, x: number, y: number, w: number, h: number,
-  opts: { title?: string; radius?: number } = {},
+  opts: { title?: string; radius?: number; fillAlpha?: number } = {},
 ) => {
   const { ctx, state, monoFont } = gc;
   const t = getTheme(state);
@@ -356,27 +356,54 @@ export const drawDocumentBox = (
   ctx.shadowOffsetY = 8;
   roundRect(ctx, x, y, w, h, r);
   ctx.fillStyle = t.panel;
+  // Lets a caller (Q22's pause-through trick) make the paper go see-through
+  // while keeping the frame/ticks/title at full strength below.
+  ctx.globalAlpha = opts.fillAlpha ?? 1;
   ctx.fill();
   ctx.restore();
 
+  // A title needs an actual gap in BOTH border strokes, not a patch painted
+  // over them afterward — erasing after the fact left the inner hairline
+  // visibly crossing straight through the label (a symmetric erase strip
+  // wasn't tall enough, and widening it fought with clip/paint-order issues
+  // instead of just fixing it). Clipping the gap out before either stroke is
+  // drawn guarantees a real, permanent gap regardless of font metrics.
+  let titlePx = 0, label = "", cw = 0;
+  if (opts.title) {
+    titlePx = Math.round(13 * s);
+    ctx.font = `bold ${titlePx}px ${monoFont}`;
+    label = opts.title.toUpperCase();
+    cw = ctx.measureText(label).width + 28;
+  }
+
+  ctx.save();
+  if (opts.title) {
+    const gapX0 = x + w / 2 - cw / 2, gapX1 = x + w / 2 + cw / 2;
+    const gapY0 = y - titlePx * 1.1, gapY1 = y + 12;
+    // ctx.clip("evenodd") (current-path + string fillRule overload) does not
+    // reliably apply the fill rule on every canvas build — an explicit Path2D
+    // with the fillRule as its own argument does.
+    const gapPath = new Path2D();
+    gapPath.rect(x - 20, y - 20, w + 40, h + 40);
+    gapPath.rect(gapX0, gapY0, gapX1 - gapX0, gapY1 - gapY0);
+    ctx.clip(gapPath, "evenodd");
+  }
   ctx.strokeStyle = t.stroke;
   ctx.lineWidth = 2.5;
   roundRect(ctx, x, y, w, h, r); ctx.stroke();
   ctx.strokeStyle = t.hairline;
   ctx.lineWidth = 1;
   roundRect(ctx, x + 6, y + 6, w - 12, h - 12, Math.max(0, r - 3)); ctx.stroke();
+  ctx.restore();
+
   drawCornerTicks(ctx, x, y, w, h, 12, t.accent);
 
   if (opts.title) {
-    ctx.font = `${Math.round(11 * s)}px ${monoFont}`;
+    ctx.font = `bold ${titlePx}px ${monoFont}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    const label = opts.title.toUpperCase();
-    const cw = ctx.measureText(label).width + 26;
-    ctx.fillStyle = t.panel;
-    ctx.fillRect(x + w / 2 - cw / 2, y - 2, cw, 5);
     ctx.fillStyle = t.accent;
-    withTracking(ctx, 1.5, () => ctx.fillText(label, x + w / 2, y));
+    withTracking(ctx, 1.8, () => ctx.fillText(label, x + w / 2, y));
   }
 };
 
@@ -509,6 +536,31 @@ export const drawGameplayFrame = (gc: GameContext) => {
   ctx.fillRect(x, y, w, h);
   ctx.restore();
 
+  const caption = state.paperCaption ??
+    (state.currentScreen === "mainmenu"    ? "·  OFFICIAL EXAMINATION  ·" :
+     state.currentScreen === "levelselect" ? "·  TABLE OF CONTENTS  ·" :
+                                             "·  EXAMINATION PAPER  ·");
+  // Bumped up from 10px/fgDim — at that size and contrast the cartouche was
+  // easy to miss sitting on the paper's own border.
+  const captionPx = Math.round(12 * s);
+  ctx.font = `bold ${captionPx}px ${monoFont}`;
+  const cw = ctx.measureText(caption).width + 22;
+
+  // The caption needs an actual gap in the border(s) it sits on, not a patch
+  // painted over them after the fact (that left the inner rule, when present,
+  // visibly crossing straight through the label). Clip the gap out before
+  // either stroke is drawn instead, so it's a real gap regardless of font
+  // metrics — matching the same fix in drawDocumentBox.
+  ctx.save();
+  const gapX0 = x + w / 2 - cw / 2, gapX1 = x + w / 2 + cw / 2;
+  const gapY0 = y - captionPx * 1.0, gapY1 = y + 12;
+  // Explicit Path2D + fillRule argument (see drawDocumentBox) — the
+  // current-path + string overload of ctx.clip() didn't reliably apply it.
+  const gapPath = new Path2D();
+  gapPath.rect(x - 20, y - 20, w + 40, h + 40);
+  gapPath.rect(gapX0, gapY0, gapX1 - gapX0, gapY1 - gapY0);
+  ctx.clip(gapPath, "evenodd");
+
   ctx.strokeStyle = t.stroke;
   ctx.lineWidth = 2.5;
   ctx.strokeRect(x, y, w, h);
@@ -524,21 +576,15 @@ export const drawGameplayFrame = (gc: GameContext) => {
     ctx.lineWidth = 1;
     ctx.strokeRect(x + 6, y + 6, w - 12, h - 12);
   }
+  ctx.restore();
+
   // crop-mark ticks on the paper's own corners (the mocks' locked look)
   drawCornerTicks(ctx, x, y, w, h, 13, t.accent, 0);
 
-  const caption = state.paperCaption ??
-    (state.currentScreen === "mainmenu"    ? "·  OFFICIAL EXAMINATION  ·" :
-     state.currentScreen === "levelselect" ? "·  TABLE OF CONTENTS  ·" :
-                                             "·  EXAMINATION PAPER  ·");
-  ctx.font = `${Math.round(10 * s)}px ${monoFont}`;
+  ctx.fillStyle = t.fgMid;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  const cw = ctx.measureText(caption).width + 20;
-  ctx.fillStyle = t.panel;
-  ctx.fillRect(x + w / 2 - cw / 2, y - 2, cw, 5);
-  ctx.fillStyle = t.fgDim;
-  withTracking(ctx, 1, () => ctx.fillText(caption, x + w / 2, y));
+  withTracking(ctx, 1.3, () => ctx.fillText(caption, x + w / 2, y));
 
   gc.chrome.paper = { x, y, w, h };
   gc.chrome.play = { x: topBoxX, y: topBoxY, w: topBoxWidth, h: topBoxHeight };

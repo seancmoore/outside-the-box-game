@@ -84,9 +84,305 @@ function formatDate(): string {
   return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
 }
 
-function serialFor(name: string): string {
-  const n = Math.abs(Array.from(name).reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 7)) % 9000 + 1000;
-  return `No. OTB-50-${n}`;
+// A fresh serial per completion (not derived from the name, so two runs by the
+// same candidate — or two candidates who typed the same name — don't collide).
+let serialNo50 = '';
+function newSerial(): string {
+  return `No. OTB-50-${1000 + Math.floor(Math.random() * 9000)}`;
+}
+function ensureSerial(): string {
+  if (!serialNo50) serialNo50 = newSerial();
+  return serialNo50;
+}
+
+function sanitizeFileName(name: string): string {
+  return (name || 'Candidate').replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'Candidate';
+}
+
+// The card is authored at this reference size (a proper landscape diploma
+// ratio, ~1.56:1) and scaled uniformly from there — on screen, or upscaled
+// for a crisp export — so it always reads as a certificate, never a square.
+const CERT_REF_W = 1000;
+const CERT_REF_H = 640;
+
+// Where the live card sits on the game canvas: always the reference ratio,
+// sized to the viewport and nudged up to leave room for the buttons below it.
+function certificateRect(gc: GameContext) {
+  const w = gc.ctx.canvas.width, h = gc.ctx.canvas.height;
+  let certW = Math.min(w * 0.86, 1040);
+  let certH = certW * (CERT_REF_H / CERT_REF_W);
+  const maxH = h * 0.60;
+  if (certH > maxH) { certW *= maxH / certH; certH = maxH; }
+  const certX = (w - certW) / 2;
+  const certY = (h - certH) / 2 - h * 0.045;
+  return { x: certX, y: certY, w: certW, h: certH };
+}
+
+// A throwaway GameContext pointed at a different canvas — lets the gc-based
+// drawing helpers (drawSeal, drawMedallion) render onto an offscreen context.
+const withCtx = (gc: GameContext, ctx: CanvasRenderingContext2D): GameContext => ({ ...gc, ctx });
+
+// ── The card itself: paper, border, every line of copy, both signatures. No
+// backdrop dimming and no buttons — those belong to the live screen only, not
+// to an exported image/video. Draws at `rect`'s own size on whatever context
+// it is given, using a local scale derived from rect (not the game's global
+// uiScale), so this renders identically whether it is small and live, or
+// rendered 2x into an offscreen canvas for a crisp download. `opts.spin`
+// controls the medallion: 0.9 (the default) for a live spin, exactly 0 to
+// freeze it front-on, showing the "OtB" face — what the still image exports.
+function paintCertificateCard(
+  gc: GameContext, ctx: CanvasRenderingContext2D,
+  rect: { x: number; y: number; w: number; h: number },
+  opts: { spin?: number } = {},
+) {
+  const { state, displayFont, bodyFont, monoFont } = gc;
+  const t = getTheme(state);
+  const cs = rect.w / CERT_REF_W;   // local card scale — independent of uiScale
+  const tier = getTier(state.examFinalMs);
+  const tc = TIERS[tier];
+  const { x: certX, y: certY, w: certW, h: certH } = rect;
+  const cx = certX + certW / 2;
+  const Y = (f: number) => certY + certH * f;
+  const gCard = withCtx(gc, ctx);
+
+  // paper
+  ctx.save();
+  ctx.shadowColor = 'rgba(40,25,5,0.40)';
+  ctx.shadowBlur = 40 * cs;
+  ctx.shadowOffsetY = 14 * cs;
+  roundRect(ctx, certX, certY, certW, certH, 4 * cs);
+  ctx.fillStyle = state.darkMode ? '#221C13' : '#FCF9F0';
+  ctx.fill();
+  ctx.restore();
+
+  // tier-coloured double border + corner diamonds
+  ctx.strokeStyle = tc.color;
+  ctx.lineWidth = 3 * cs;
+  roundRect(ctx, certX + 8 * cs, certY + 8 * cs, certW - 16 * cs, certH - 16 * cs, 2 * cs);
+  ctx.stroke();
+  ctx.strokeStyle = tc.colorDim;
+  ctx.lineWidth = 1 * cs;
+  roundRect(ctx, certX + 14 * cs, certY + 14 * cs, certW - 28 * cs, certH - 28 * cs, 2 * cs);
+  ctx.stroke();
+  drawCertCorners(ctx, certX + 8 * cs, certY + 8 * cs, certW - 16 * cs, certH - 16 * cs, tc.color, cs);
+
+  // seal watermark behind the text — bumped up from 0.05, which read as
+  // basically invisible, to something you can actually make out
+  ctx.save();
+  ctx.globalAlpha = 0.14;
+  drawSeal(gCard, cx, Y(0.55), certH * 0.3, { color: tc.color });
+  ctx.restore();
+
+  // date (left) and standing + serial (right) along the top — bumped up from
+  // 10px so the date and the serial number both read clearly at a glance.
+  ctx.fillStyle = t.fgDim;
+  ctx.font = `bold ${Math.round(13 * cs)}px ${monoFont}`;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  ctx.fillText(formatDate(), certX + 28 * cs, Y(0.075));
+  drawStandingLine(gc, ctx, cs, certX + certW - 28 * cs, Y(0.075));
+
+  // institute eyebrow
+  ctx.fillStyle = tc.color;
+  ctx.textAlign = 'center';
+  ctx.font = `bold ${Math.round(13 * cs)}px ${monoFont}`;
+  ctx.fillText('INSTITUTE OF LATERAL COGNITION', cx, Y(0.13));
+
+  // award medallion (the 3D hero). Spin 0 freezes it "OtB"-face-forward —
+  // exactly what the still-image export wants.
+  drawMedallion(gCard, cx, Y(0.245), certH * 0.062, { spin: opts.spin ?? 0.9 });
+
+  // tier badge
+  ctx.fillStyle = tc.color;
+  ctx.font = `bold ${Math.round(15 * cs)}px ${monoFont}`;
+  ctx.fillText(`✦   ${tc.label} TIER   ✦`, cx, Y(0.355));
+
+  // title (shrunk to fit)
+  ctx.fillStyle = t.ink;
+  const titlePx = fitText(ctx, tc.title, certW * 0.84, Math.round(30 * cs), displayFont, 'bold');
+  ctx.font = `bold ${titlePx}px ${displayFont}`;
+  ctx.fillText(tc.title, cx, Y(0.42));
+
+  // certify line
+  ctx.fillStyle = t.fgDim;
+  ctx.font = `italic ${Math.round(14 * cs)}px ${displayFont}`;
+  ctx.fillText('This is to certify that', cx, Y(0.50));
+
+  // candidate name + flourish
+  ctx.fillStyle = tc.color;
+  const namePx = fitText(ctx, state.playerName, certW * 0.7, Math.round(40 * cs), displayFont, 'bold');
+  ctx.font = `bold ${namePx}px ${displayFont}`;
+  ctx.fillText(state.playerName, cx, Y(0.585));
+  const nameW = Math.min(ctx.measureText(state.playerName).width, certW * 0.7);
+  ctx.strokeStyle = tc.colorDim;
+  ctx.lineWidth = 1 * cs;
+  ctx.beginPath();
+  ctx.moveTo(cx - nameW / 2 - 12 * cs, Y(0.63));
+  ctx.lineTo(cx + nameW / 2 + 12 * cs, Y(0.63));
+  ctx.stroke();
+
+  // body
+  ctx.fillStyle = t.fgMid;
+  const bodyPx = Math.round(13.5 * cs);
+  ctx.font = `${bodyPx}px ${bodyFont}`;
+  tc.body.forEach((line, i) => ctx.fillText(line, cx, Y(0.685) + i * (bodyPx * 1.5), certW * 0.82));
+
+  // divider
+  ctx.strokeStyle = tc.colorDim;
+  ctx.lineWidth = 1 * cs;
+  ctx.beginPath();
+  ctx.moveTo(certX + certW * 0.12, Y(0.80));
+  ctx.lineTo(certX + certW * 0.88, Y(0.80));
+  ctx.stroke();
+
+  // grade + time
+  ctx.fillStyle = tc.color;
+  ctx.font = `bold ${Math.round(14 * cs)}px ${monoFont}`;
+  ctx.fillText(`${tc.timeLabel.toUpperCase()}    ·    ${formatTime(state.examFinalMs)}`, cx, Y(0.845));
+
+  // footnote
+  ctx.fillStyle = t.fgDim;
+  ctx.font = `italic ${Math.round(12.5 * cs)}px ${displayFont}`;
+  ctx.fillText(tc.footnote, cx, Y(0.878));
+
+  // signatures — left stays the in-universe examiner; right is the real one:
+  // the actual person who made this game, signed in an actual cursive hand.
+  const sigY = Y(0.925);
+  const lx = certX + certW * 0.27;
+  const rx = certX + certW * 0.73;
+
+  // The examiner's own sprite (the character from the bottom panel all exam
+  // long), standing right next to the mark he actually made.
+  if (gc.playerDownLoaded) {
+    const exSize = 42 * cs;
+    const exRight = lx - 72 * cs - 22 * cs;
+    ctx.drawImage(gc.playerDownImg, exRight - exSize, sigY - 14 * cs - exSize / 2, exSize, exSize);
+  }
+
+  drawSignature(ctx, lx, sigY - 14 * cs, tc.color, cs);
+  ctx.strokeStyle = t.hairline;
+  ctx.lineWidth = 1 * cs;
+  ctx.beginPath(); ctx.moveTo(lx - 72 * cs, sigY); ctx.lineTo(lx + 72 * cs, sigY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(rx - 72 * cs, sigY); ctx.lineTo(rx + 72 * cs, sigY); ctx.stroke();
+
+  ctx.save();
+  ctx.fillStyle = tc.color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.font = `italic ${Math.round(24 * cs)}px "Segoe Script","Brush Script MT",cursive`;
+  ctx.fillText('Sean Moore', rx, sigY - 5 * cs);
+  ctx.restore();
+
+  ctx.fillStyle = t.fgDim;
+  ctx.font = `bold ${Math.round(11.5 * cs)}px ${monoFont}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText('CHIEF EXAMINER', lx, sigY + 6 * cs);
+  ctx.fillText('DESIGNED BY', rx, sigY + 6 * cs);
+
+  // credit / portfolio — moved into the bottom corners as fine print rather
+  // than a banner across the middle, under the signature each half belongs to.
+  const cornerY1 = certY + certH - 27 * cs;
+  const cornerY2 = certY + certH - 12 * cs;
+  ctx.fillStyle = t.fgDim;
+  ctx.font = `${Math.round(10 * cs)}px ${monoFont}`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText('OUTSIDE THE BOX', certX + 22 * cs, cornerY1);
+  ctx.fillText('BUILT BY SEAN MOORE', certX + 22 * cs, cornerY2);
+
+  ctx.fillStyle = tc.color;
+  ctx.font = `bold ${Math.round(15 * cs)}px ${monoFont}`;
+  ctx.textAlign = 'right';
+  ctx.fillText('sean-moore-portfolio.web.app', certX + certW - 22 * cs, cornerY2);
+}
+
+function downloadCertificateImage(gc: GameContext) {
+  const scale = 2;         // crisp on a retina share/print
+  const pad = 70 * scale;  // room for the drop shadow, unclipped
+  const cw = CERT_REF_W * scale, ch = CERT_REF_H * scale;
+  const off = document.createElement('canvas');
+  off.width = cw + pad * 2;
+  off.height = ch + pad * 2;
+  const octx = off.getContext('2d');
+  if (!octx) return;
+
+  octx.fillStyle = gc.state.darkMode ? '#15110C' : '#EDE4D0';
+  octx.fillRect(0, 0, off.width, off.height);
+
+  // Frozen "OtB" face — the still image never shows a half-turned coin.
+  paintCertificateCard(gc, octx, { x: pad, y: pad, w: cw, h: ch }, { spin: 0 });
+
+  off.toBlob((blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `OtB-Certificate-${sanitizeFileName(gc.state.playerName)}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }, 'image/png');
+}
+
+let recording50 = false;
+
+// Renders the card fresh into its own offscreen canvas for one full medallion
+// rotation and hands back a .webm — the animated version of the certificate,
+// with none of the page's dimmed backdrop or buttons in frame.
+function downloadCertificateVideo(gc: GameContext) {
+  if (recording50) return;
+  const scale = 1.5;
+  const pad = 70 * scale;
+  const cw = CERT_REF_W * scale, ch = CERT_REF_H * scale;
+  const off = document.createElement('canvas');
+  off.width = cw + pad * 2;
+  off.height = ch + pad * 2;
+  const octx = off.getContext('2d');
+  const capturable = off as unknown as { captureStream?: (fps?: number) => MediaStream };
+  if (!octx || typeof capturable.captureStream !== 'function' || typeof MediaRecorder === 'undefined') {
+    // No MediaRecorder support in this browser — the still image is the fallback.
+    downloadCertificateImage(gc);
+    return;
+  }
+
+  recording50 = true;
+  const bgFill = gc.state.darkMode ? '#15110C' : '#EDE4D0';
+  const stream = capturable.captureStream(30);
+  const mimeCandidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+  const mimeType = mimeCandidates.find((m) => MediaRecorder.isTypeSupported(m)) ?? '';
+  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+  const chunks: BlobPart[] = [];
+  recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+  let raf = 0;
+  const draw = () => {
+    octx.fillStyle = bgFill;
+    octx.fillRect(0, 0, off.width, off.height);
+    paintCertificateCard(gc, octx, { x: pad, y: pad, w: cw, h: ch }, { spin: 0.9 });
+    raf = requestAnimationFrame(draw);
+  };
+
+  recorder.onstop = () => {
+    cancelAnimationFrame(raf);
+    recording50 = false;
+    const blob = new Blob(chunks, { type: mimeType || 'video/webm' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `OtB-Certificate-${sanitizeFileName(gc.state.playerName)}.webm`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  };
+
+  draw();
+  recorder.start();
+  // One full medallion rotation at the default spin (0.9 rad/s) takes
+  // 2π / 0.9 ≈ 7s — long enough for a seamless loop.
+  setTimeout(() => { if (recorder.state !== 'inactive') recorder.stop(); }, 7000);
 }
 
 // Shrinks font px until the text fits maxW.
@@ -133,25 +429,30 @@ function drawSignature(ctx: CanvasRenderingContext2D, cx: number, cy: number, co
 // The serial line, right-aligned: STANDING AT COMPLETION <hearts>  ·  No. OTB-50-####
 // The hearts are the HUD's own vector heart, so the diploma records what the
 // candidate finished on: full for the hearts still held, faded for the spent ones.
-function drawStandingLine(gc: GameContext, rightX: number, y: number) {
-  const { ctx, state, monoFont } = gc;
+function drawStandingLine(gc: GameContext, ctx: CanvasRenderingContext2D, cs: number, rightX: number, y: number) {
+  const { state, monoFont } = gc;
   const t = getTheme(state);
-  const s = uiScale(ctx);
 
   const label = 'STANDING AT COMPLETION';
-  const tail  = `   ·   ${serialFor(state.playerName)}`;
-  const heartSize = Math.round(11 * s);
-  const heartStep = heartSize + Math.round(3 * s);
+  const tail  = `   ·   ${ensureSerial()}`;
+  // Bumped up from 11/10px — the serial number is the one thing on this card
+  // meant to look like a real record, so it needs to actually be readable.
+  const heartSize = Math.round(13 * cs);
+  const heartStep = heartSize + Math.round(3 * cs);
   const heartsW   = heartStep * 3;
-  const gap = 7 * s;
+  const gap = 8 * cs;
+  const labelPx = Math.round(11 * cs);
+  const tailPx  = Math.round(13 * cs);
 
-  ctx.font = `${Math.round(10 * s)}px ${monoFont}`;
+  ctx.font = `bold ${labelPx}px ${monoFont}`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   const labelW = ctx.measureText(label).width;
+  ctx.font = `bold ${tailPx}px ${monoFont}`;
   const tailW  = ctx.measureText(tail).width;
 
   let mx = rightX - (labelW + gap + heartsW + tailW);
+  ctx.font = `bold ${labelPx}px ${monoFont}`;
   ctx.fillStyle = t.fgDim;
   ctx.fillText(label, mx, y);
   mx += labelW + gap;
@@ -165,154 +466,50 @@ function drawStandingLine(gc: GameContext, rightX: number, y: number) {
   }
   mx += heartsW;
 
-  ctx.fillStyle = t.fgDim;
+  ctx.font = `bold ${tailPx}px ${monoFont}`;
+  ctx.fillStyle = t.ink;
   ctx.fillText(tail, mx, y);
 }
 
 // ── The diploma (full-screen presentation) ────────────────────────────────────
 function drawCertificate(gc: GameContext) {
-  const { ctx, state, displayFont, bodyFont, monoFont } = gc;
+  const { ctx, state } = gc;
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
-  const t = getTheme(state);
   const s = uiScale(ctx);
-  const tier = getTier(state.examFinalMs);
-  const tc = TIERS[tier];
 
   // backdrop focus
   ctx.fillStyle = state.darkMode ? 'rgba(0,0,0,0.34)' : 'rgba(40,30,15,0.12)';
   ctx.fillRect(0, 0, w, h);
 
-  const certW = Math.min(w * 0.66, 780);
-  const certH = Math.min(h * 0.74, 560);
-  const certX = (w - certW) / 2;
-  const certY = (h - certH) / 2 - h * 0.03;
+  const rect = certificateRect(gc);
+  const { x: certX, y: certY, w: certW, h: certH } = rect;
   const cx = certX + certW / 2;
-  const Y = (f: number) => certY + certH * f;
 
-  // paper
-  ctx.save();
-  ctx.shadowColor = 'rgba(40,25,5,0.40)';
-  ctx.shadowBlur = 40;
-  ctx.shadowOffsetY = 14;
-  roundRect(ctx, certX, certY, certW, certH, 4);
-  ctx.fillStyle = state.darkMode ? '#221C13' : '#FCF9F0';
-  ctx.fill();
-  ctx.restore();
-
-  // tier-coloured double border + corner diamonds
-  ctx.strokeStyle = tc.color;
-  ctx.lineWidth = 3;
-  roundRect(ctx, certX + 8, certY + 8, certW - 16, certH - 16, 2);
-  ctx.stroke();
-  ctx.strokeStyle = tc.colorDim;
-  ctx.lineWidth = 1;
-  roundRect(ctx, certX + 14, certY + 14, certW - 28, certH - 28, 2);
-  ctx.stroke();
-  drawCertCorners(ctx, certX + 8, certY + 8, certW - 16, certH - 16, tc.color, s);
-
-  // faint seal watermark behind the text
-  ctx.save();
-  ctx.globalAlpha = 0.05;
-  drawSeal(gc, cx, Y(0.55), certH * 0.3, { color: tc.color });
-  ctx.restore();
-
-  // date (left) and standing + serial (right) along the top
-  ctx.fillStyle = t.fgDim;
-  ctx.font = `${Math.round(10 * s)}px ${monoFont}`;
-  ctx.textBaseline = 'middle';
-  ctx.textAlign = 'left';
-  ctx.fillText(formatDate(), certX + 28, Y(0.075));
-  drawStandingLine(gc, certX + certW - 28, Y(0.075));
-
-  // institute eyebrow
-  ctx.fillStyle = tc.color;
-  ctx.textAlign = 'center';
-  ctx.font = `${Math.round(11 * s)}px ${monoFont}`;
-  ctx.fillText('INSTITUTE OF LATERAL COGNITION', cx, Y(0.14));
-
-  // spinning award medallion (the 3D hero)
-  drawMedallion(gc, cx, Y(0.235), certH * 0.085);
-
-  // tier badge
-  ctx.fillStyle = tc.color;
-  ctx.font = `bold ${Math.round(13 * s)}px ${monoFont}`;
-  ctx.fillText(`✦   ${tc.label} TIER   ✦`, cx, Y(0.34));
-
-  // title (shrunk to fit)
-  ctx.fillStyle = t.ink;
-  const titlePx = fitText(ctx, tc.title, certW * 0.84, Math.round(30 * s), displayFont, 'bold');
-  ctx.font = `bold ${titlePx}px ${displayFont}`;
-  ctx.fillText(tc.title, cx, Y(0.42));
-
-  // certify line
-  ctx.fillStyle = t.fgDim;
-  ctx.font = `italic ${Math.round(14 * s)}px ${displayFont}`;
-  ctx.fillText('This is to certify that', cx, Y(0.50));
-
-  // candidate name + flourish
-  ctx.fillStyle = tc.color;
-  const namePx = fitText(ctx, state.playerName, certW * 0.7, Math.round(40 * s), displayFont, 'bold');
-  ctx.font = `bold ${namePx}px ${displayFont}`;
-  ctx.fillText(state.playerName, cx, Y(0.585));
-  const nameW = Math.min(ctx.measureText(state.playerName).width, certW * 0.7);
-  ctx.strokeStyle = tc.colorDim;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(cx - nameW / 2 - 12, Y(0.63));
-  ctx.lineTo(cx + nameW / 2 + 12, Y(0.63));
-  ctx.stroke();
-
-  // body
-  ctx.fillStyle = t.fgMid;
-  const bodyPx = Math.round(12.5 * s);
-  ctx.font = `${bodyPx}px ${bodyFont}`;
-  tc.body.forEach((line, i) => ctx.fillText(line, cx, Y(0.685) + i * (bodyPx * 1.5), certW * 0.82));
-
-  // divider
-  ctx.strokeStyle = tc.colorDim;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(certX + certW * 0.12, Y(0.80));
-  ctx.lineTo(certX + certW * 0.88, Y(0.80));
-  ctx.stroke();
-
-  // grade + time
-  ctx.fillStyle = tc.color;
-  ctx.font = `bold ${Math.round(12 * s)}px ${monoFont}`;
-  ctx.fillText(`${tc.timeLabel.toUpperCase()}    ·    ${formatTime(state.examFinalMs)}`, cx, Y(0.845));
-
-  // footnote
-  ctx.fillStyle = t.fgDim;
-  ctx.font = `italic ${Math.round(11 * s)}px ${displayFont}`;
-  ctx.fillText(tc.footnote, cx, Y(0.885));
-
-  // signatures
-  const sigY = Y(0.95);
-  const lx = certX + certW * 0.27;
-  const rx = certX + certW * 0.73;
-  drawSignature(ctx, lx, sigY - 14 * s, tc.color, s);
-  ctx.strokeStyle = t.hairline;
-  ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(lx - 72 * s, sigY); ctx.lineTo(lx + 72 * s, sigY); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(rx - 72 * s, sigY); ctx.lineTo(rx + 72 * s, sigY); ctx.stroke();
-  drawSignature(ctx, rx, sigY - 14 * s, tc.color, s);
-  ctx.fillStyle = t.fgDim;
-  ctx.font = `${Math.round(9.5 * s)}px ${monoFont}`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  ctx.fillText('CHIEF EXAMINER', lx, sigY + 6);
-  ctx.fillText('REGISTRAR', rx, sigY + 6);
+  paintCertificateCard(gc, ctx, rect, { spin: 0.9 });
 
   // main menu
   const btnW = Math.min(certW * 0.34, 240);
   const btnH = Math.max(42, h * 0.058);
-  drawButton(gc, 'MAIN MENU', cx - btnW / 2, certY + certH + h * 0.025, btnW, btnH, () => {
+  const menuY = certY + certH + h * 0.028;
+  drawButton(gc, 'MAIN MENU', cx - btnW / 2, menuY, btnW, btnH, () => {
     state.currentScreen = 'mainmenu';
     state.examStartTime = 0;
     gc.resetPlayerName();
     gc.render();
   }, 18);
+
+  // download the card — a still image always, or a short clip of the spin
+  const dlW  = Math.min(certW * 0.30, 210);
+  const dlH  = Math.max(36, h * 0.044);
+  const dlY  = menuY + btnH + h * 0.016;
+  const dlGap = 14 * s;
+  drawButton(gc, 'DOWNLOAD IMAGE', cx - dlW - dlGap / 2, dlY, dlW, dlH, () => {
+    downloadCertificateImage(gc);
+  }, 13);
+  drawButton(gc, recording50 ? 'RECORDING…' : 'DOWNLOAD VIDEO', cx + dlGap / 2, dlY, dlW, dlH, () => {
+    downloadCertificateVideo(gc);
+  }, 13);
 }
 
 // The examiner's closing remark, drawn on the CORRECT screen. The engine hides
@@ -364,6 +561,7 @@ function drawWin(gc: GameContext) {
 
   if (state.winChimeFor !== 50) {
     state.winChimeFor = 50;
+    serialNo50 = newSerial();   // a fresh serial for this completion
     gc.sounds.ui('seal');
     say(gc, WIN_LINE);
   }

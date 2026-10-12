@@ -46,6 +46,7 @@ export interface GameState {
   pauseCheatPlaceholder?: string; // placeholder text in the INVIGILATOR OVERRIDE box (Q39)
   pauseCheatDone?:   boolean;  // the › button has been pressed on this level (Q39)
   pauseCartouche?:   string;   // replaces "EXAMINATION SUSPENDED" (Q22)
+  pauseTransparent?: boolean;  // pause panel goes see-through so the level shows behind it (Q22)
 }
 
 export interface HitArea {

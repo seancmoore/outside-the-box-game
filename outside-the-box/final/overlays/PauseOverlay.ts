@@ -15,7 +15,10 @@ export const drawPauseOverlay = (gc: GameContext) => {
   const t = getTheme(state);
   const s = uiScale(ctx);
 
-  drawDocumentBox(gc, ox, oy, ow, oh, { title: state.pauseCartouche ?? "Examination Suspended" });
+  drawDocumentBox(gc, ox, oy, ow, oh, {
+    title: state.pauseCartouche ?? "Examination Suspended",
+    fillAlpha: state.pauseTransparent ? 0.14 : 1,
+  });
 
   ctx.fillStyle = t.ink;
   ctx.textAlign = "center";

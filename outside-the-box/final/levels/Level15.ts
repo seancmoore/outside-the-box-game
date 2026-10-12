@@ -53,6 +53,7 @@ const BUMPS = [
   'Watch your line, candidate. They must not touch.',
   'Again. The lines. Must. Not. Touch.',
   'Your penmanship is a hazard to others.',
+  'Just makes you want to rip the exam paper up, doesn\'t it.',
 ];
 const RIP_LINE  = 'CANDIDATE. That is Institute property. ...Was. It was Institute property.';
 const DESK_LINE = 'And now you are drawing on the desk. ...I see no rule against it. Somehow.';

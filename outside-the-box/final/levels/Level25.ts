@@ -10,10 +10,13 @@ import State            from '../../../Wolfie2D/DataTypes/State/State';
 import GameEvent        from '../../../Wolfie2D/Events/GameEvent';
 
 // ── Q25 — Lights Maze ─────────────────────────────────────────────────────────
-// A seeded maze with three gates that only exist in one of the two rooms. The
-// conventional play is to run the maze until the 80 second clock takes a heart.
-// The trick is the pause menu: switching DARK MODE changes which walls are solid.
-// After the first switch a ◐ TOGGLE shortcut appears in the corner of the maze.
+// A fresh maze every attempt, generated on entry (never the same layout twice),
+// with a dense scatter of gates along the one true path that only exist in one
+// of the two rooms. Running it blind — memorising a layout, wall-following, or
+// bumping your way through — does not work: most of the route is gated, so the
+// only way through is to actually read the walls and flip DARK MODE whenever
+// the way forward disappears. After the first switch a ◐ TOGGLE shortcut
+// appears in the corner of the maze.
 
 // ── Seeded RNG (Xorshift32) ───────────────────────────────────────────────────
 function makeRng(seed: number) {
@@ -25,10 +28,12 @@ function makeRng(seed: number) {
 }
 
 // ── Maze dimensions ───────────────────────────────────────────────────────────
-const ROOM_COLS = 11;
-const ROOM_ROWS = 8;
-const GRID_COLS = ROOM_COLS * 2 + 1;   // 23
-const GRID_ROWS = ROOM_ROWS * 2 + 1;   // 17
+// Larger than a typical maze level and regenerated every attempt — bigger, and
+// never the same twice, so there is nothing to memorise or guess from a prior run.
+const ROOM_COLS = 15;
+const ROOM_ROWS = 11;
+const GRID_COLS = ROOM_COLS * 2 + 1;   // 31
+const GRID_ROWS = ROOM_ROWS * 2 + 1;   // 23
 
 const S_RC = Math.floor(ROOM_COLS / 2);   // 5
 const S_RR = ROOM_ROWS - 1;              // 7
@@ -46,9 +51,17 @@ const EXIT_GCOL  = E_RC * 2 + 1;   // 11
 
 interface Gate25 { r: number; c: number; type: number; }
 
-// ── Static maze generation (seeded — same every time) ─────────────────────────
-function generateStaticMaze(): { grid: number[][]; gates: Gate25[] } {
-  const rng = makeRng(0xC0FFEE42);
+// Fraction of eligible path-passage cells converted into a gate. High enough
+// that the route is gated for most of its length — wall-following or bumping
+// through in a single lighting mode reliably dead-ends.
+const GATE_CHANCE = 0.55;
+// Minimum gates enforced regardless of how the coin flips landed, scaled to
+// maze size, so a short random path can't accidentally generate an easy one.
+const MIN_GATE_FRACTION = 0.35;
+
+// ── Maze generation (fresh RNG seed every attempt) ─────────────────────────────
+function generateMaze25(seed: number): { grid: number[][]; gates: Gate25[] } {
+  const rng = makeRng(seed);
 
   const grid: number[][] = Array.from({ length: GRID_ROWS }, () =>
     new Array(GRID_COLS).fill(1)
@@ -89,20 +102,44 @@ function generateStaticMaze(): { grid: number[][]; gates: Gate25[] } {
   // the start room, so leaving an opening there lets them walk around the maze.
   grid[0][EXIT_GCOL] = 0;
 
-  // Place 3 mode-toggle gates along the unique solution path. Alternating
-  // types force the player to switch dark/light to reach the exit.
+  // Place mode-toggle gates densely along the unique solution path. Every
+  // eligible passage is a coin flip (GATE_CHANCE), with a size-scaled floor
+  // enforced afterward so a short random path can't dodge the mechanic
+  // entirely. Types strictly alternate, so consecutive gates never share a
+  // mode and the route genuinely requires repeated switching, not one flip.
+  // A short buffer at each end is left ungated so spawn/exit are never
+  // themselves blocked out from under the player.
   const path = findSolutionPath(grid);
   const passages = path.filter(([r, c]) =>
     (r % 2 === 0 && c % 2 === 1) || (r % 2 === 1 && c % 2 === 0)
   );
+  const BUFFER = Math.min(2, Math.floor(passages.length * 0.05));
+  const eligible = passages.slice(BUFFER, passages.length - BUFFER);
+
   const gates: Gate25[] = [];
-  if (passages.length >= 3) {
-    const gateTypes = [2, 3, 2];
-    const gateFracs = [0.25, 0.50, 0.75];
-    for (let i = 0; i < 3; i++) {
-      const [r, c] = passages[Math.floor(passages.length * gateFracs[i])];
-      grid[r][c] = gateTypes[i];
-      gates.push({ r, c, type: gateTypes[i] });
+  let nextType = rng() < 0.5 ? 2 : 3;
+  for (const [r, c] of eligible) {
+    if (rng() < GATE_CHANCE) {
+      grid[r][c] = nextType;
+      gates.push({ r, c, type: nextType });
+      nextType = nextType === 2 ? 3 : 2;
+    }
+  }
+
+  // Floor: top up with evenly-spaced gates (skipping cells already gated)
+  // until at least MIN_GATE_FRACTION of the eligible path is gated.
+  const minGates = Math.ceil(eligible.length * MIN_GATE_FRACTION);
+  if (eligible.length > 0 && gates.length < minGates) {
+    const gatedCells = new Set(gates.map(g => `${g.r},${g.c}`));
+    const need = minGates - gates.length;
+    const stride = Math.max(1, Math.floor(eligible.length / (need + 1)));
+    for (let i = stride; i < eligible.length && gates.length < minGates; i += stride) {
+      const [r, c] = eligible[i];
+      if (gatedCells.has(`${r},${c}`)) continue;
+      grid[r][c] = nextType;
+      gates.push({ r, c, type: nextType });
+      gatedCells.add(`${r},${c}`);
+      nextType = nextType === 2 ? 3 : 2;
     }
   }
 
@@ -147,24 +184,14 @@ function findSolutionPath(grid: number[][]): Array<[number, number]> {
   return path;
 }
 
-// Pre-compute once at module load — always the same maze
-const MAZE25 = generateStaticMaze();
-const STATIC_MAZE: number[][] = MAZE25.grid;
-const STATIC_GATES: Gate25[] = MAZE25.gates;
-
-// The route through the maze if every gate were open: the one the player walks
-// while flipping the lights. Exposed for the harness.
-const SOLUTION_PATH: Array<[number, number]> =
-  findSolutionPath(STATIC_MAZE.map(row => row.map(t => (t === 2 || t === 3) ? 0 : t)));
-
 // Walls are mode-dependent: type 1 is always solid, type 2 is solid only in
-// dark mode, type 3 is solid only in light mode. We pre-build one wall list
-// per mode and swap which one the player collides against each frame.
-function buildStaticWallsForMode(darkMode: boolean): AABB[] {
+// dark mode, type 3 is solid only in light mode. We build one wall list per
+// mode and swap which one the player collides against each frame.
+function buildWallsForMode25(grid: number[][], darkMode: boolean): AABB[] {
   const walls: AABB[] = [];
   for (let r = 0; r < GRID_ROWS; r++) {
     for (let c = 0; c < GRID_COLS; c++) {
-      const cell = STATIC_MAZE[r][c];
+      const cell = grid[r][c];
       const solid = cell === 1 ||
                     (cell === 2 && darkMode) ||
                     (cell === 3 && !darkMode);
@@ -174,8 +201,25 @@ function buildStaticWallsForMode(darkMode: boolean): AABB[] {
   return walls;
 }
 
-const STATIC_WALLS_DARK:  AABB[] = buildStaticWallsForMode(true);
-const STATIC_WALLS_LIGHT: AABB[] = buildStaticWallsForMode(false);
+// ── Per-attempt maze state — regenerated from a fresh random seed every time
+// the level is (re)entered, so no two attempts share a layout. ────────────────
+let maze25:        number[][] = [];
+let gates25:       Gate25[]   = [];
+let solutionPath25: Array<[number, number]> = [];
+let wallsDark25:   AABB[] = [];
+let wallsLight25:  AABB[] = [];
+
+function regenerateMaze25() {
+  const seed = (Math.random() * 0xFFFFFFFF) >>> 0;
+  const { grid, gates } = generateMaze25(seed);
+  maze25  = grid;
+  gates25 = gates;
+  // The route through the maze if every gate were open: the one the player
+  // walks while flipping the lights. Exposed for the harness.
+  solutionPath25 = findSolutionPath(grid.map(row => row.map(t => (t === 2 || t === 3) ? 0 : t)));
+  wallsDark25  = buildWallsForMode25(grid, true);
+  wallsLight25 = buildWallsForMode25(grid, false);
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const PLAYER_SPEED25 = 7.5;
@@ -289,25 +333,43 @@ let faceUpUntil25        = 0;        // performance.now() deadline for the exami
 
 // ── Draw function ─────────────────────────────────────────────────────────────
 export const drawLevel25 = (gc: GameContext) => {
-  const { ctx, state, displayFont, bodyFont } = gc;
+  const { ctx, state, displayFont, bodyFont, monoFont } = gc;
   const { w, topBoxX, topBoxY, topBoxWidth, topBoxHeight } = getLayout(ctx);
   const t  = getTheme(state);
   const s  = uiScale(ctx);
   const cx = w / 2;
 
   if (state.levelSubPhase === 'win') {
-    drawWinScreen(gc, 'THROUGH.', 'Three of those walls only ever existed in one of the two rooms.', 26);
+    drawWinScreen(gc, 'THROUGH.', 'Most of those walls only ever existed in one of the two rooms.', 26);
+
+    // HALFWAY seal — Q25 is the literal halfway point (25 of 50), so the
+    // checkpoint stamp belongs on this interlude screen, not on Q30.
+    const sr = Math.min(topBoxWidth, topBoxHeight) * 0.11;
+    const sx = topBoxX + topBoxWidth - sr - 34 * s, sy = topBoxY + sr + 22 * s;
+    ctx.save();
+    ctx.translate(sx, sy); ctx.rotate(-12 * Math.PI / 180);
+    ctx.strokeStyle = t.seal; ctx.lineWidth = 2.5; ctx.setLineDash([4, 2.4]);
+    ctx.beginPath(); ctx.arc(0, 0, sr, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = state.darkMode ? 'rgba(212,176,90,0.12)' : 'rgba(176,137,47,0.10)';
+    ctx.beginPath(); ctx.arc(0, 0, sr * 0.8, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = t.seal; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `bold ${Math.round(sr * 0.24)}px ${monoFont}`; ctx.fillText('HALFWAY', 0, -sr * 0.08);
+    ctx.font = `italic ${Math.round(sr * 0.2)}px ${displayFont}`; ctx.fillText('25 of 50', 0, sr * 0.22);
+    ctx.restore();
+
     return;
   }
 
   if (freshEntry(gc)) {
+    regenerateMaze25();
     const sx = START_GCOL + 0.5;
     const sy = START_GROW + 0.5;
     const histX = new Float32Array(HIST_LEN25).fill(sx);
     const histY = new Float32Array(HIST_LEN25).fill(sy);
     player25 = new Player25SM({
       pos:      new Vec2(sx, sy),
-      walls:    state.darkMode ? STATIC_WALLS_DARK : STATIC_WALLS_LIGHT,
+      walls:    state.darkMode ? wallsDark25 : wallsLight25,
       keysDown: gc.keysDown,
       half:     PLAYER_HALF25,
       won:      false,
@@ -316,7 +378,7 @@ export const drawLevel25 = (gc: GameContext) => {
         gc.sounds.play('mazeOof', { volume: 0.65 });
         shakeUntil25 = clock25.elapsed + SHAKE_SECS25;
         // The first time a mode gate stops you, the examiner names the trick.
-        if (STATIC_MAZE[r] && STATIC_MAZE[r][c] >= 2 && gateHits25++ === 0) say(gc, GATE_LINE);
+        if (maze25[r] && maze25[r][c] >= 2 && gateHits25++ === 0) say(gc, GATE_LINE);
       },
       histX,
       histY,
@@ -365,7 +427,7 @@ export const drawLevel25 = (gc: GameContext) => {
 
   // ── Advance the dot ────────────────────────────────────────────────────────
   if (player25 && step > 0) {
-    player25.data.walls = state.darkMode ? STATIC_WALLS_DARK : STATIC_WALLS_LIGHT;
+    player25.data.walls = state.darkMode ? wallsDark25 : wallsLight25;
     player25.update(step);
   }
 
@@ -383,7 +445,7 @@ export const drawLevel25 = (gc: GameContext) => {
   ctx.fillStyle = t.ink;
   for (let r = 0; r < GRID_ROWS; r++) {
     for (let c = 0; c < GRID_COLS; c++) {
-      const cell = STATIC_MAZE[r][c];
+      const cell = maze25[r][c];
       if (cell === 0) continue;
       const visible = cell === 1 ||
                       (cell === 2 && state.darkMode) ||
@@ -480,9 +542,9 @@ export const drawLevel25 = (gc: GameContext) => {
     toggled:  hasToggledDark25,
     timeLeft,
     gateHits: gateHits25,
-    grid:     STATIC_MAZE,
-    gates:    STATIC_GATES,
-    path:     SOLUTION_PATH,
+    grid:     maze25,
+    gates:    gates25,
+    path:     solutionPath25,
     won:      player25 ? player25.data.won : false,
   };
 };

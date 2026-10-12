@@ -404,6 +404,7 @@ window.onload = () => {
     st.pauseCheatPlaceholder = undefined;
     st.pauseCheatDone = undefined;
     st.pauseCartouche = undefined;
+    st.pauseTransparent = undefined;
     gc.pauseIntercept = undefined;
     gc.pauseCheatHandler = undefined;
     gc.afterPanel = undefined;
@@ -509,6 +510,19 @@ window.onload = () => {
       gc.sounds.play("bgmLevel21", { loop: true, volume: 0.35, restart: false });
     } else {
       gc.sounds.stop("bgmLevel21");
+    }
+
+    // Level 17 (Do Nothing) — alarm siren + urgent shouting while the countdown
+    // trap is actually live. Off during the win screen, pause, or controls, so
+    // it isn't blaring under menus.
+    if (gc.state.currentScreen === "level" && gc.state.currentLevel === 17 &&
+        gc.state.levelSubPhase === "active" &&
+        !gc.state.paused && !gc.state.gameOver && !gc.state.controlsOpen) {
+      gc.sounds.startSiren();
+      gc.sounds.startShouting();
+    } else {
+      gc.sounds.stopSiren();
+      gc.sounds.stopShouting();
     }
 
     if (movementLevelActive) {
@@ -722,6 +736,19 @@ window.onload = () => {
   }, { passive: false });
 
   window.addEventListener("keydown", (e) => {
+    // Stop arrow keys from scrolling the page — an in-flight scroll can shift
+    // focus away from the window before the matching keyup fires, leaving the
+    // key permanently "stuck" in gc.keysDown (visible as involuntary movement
+    // in key-driven levels like Level10's maze).
+    if (e.key.startsWith("Arrow")) e.preventDefault();
+
+    // Same for Space: levels bind it to serve/jump/fire (e.g. Level6's pong
+    // paddle), but left unguarded the browser's default "page down" scroll
+    // fires too, shoving the whole canvas toward the bottom of the viewport
+    // and leaving it stuck scrolled there. Don't swallow it while a text
+    // field (name entry / pause cheat code) is focused though.
+    if (e.key === " " && !gc.state.nameFocused && !gc.state.pauseCheatFocused) e.preventDefault();
+
     gc.sounds.resumeFx();
     gc.keysDown.add(e.key);
 
@@ -818,12 +845,25 @@ window.onload = () => {
     gc.keysDown.delete(e.key);
   });
 
+  // Safety net: if focus leaves the window while a key is held (alt-tab, a
+  // browser dialog, devtools, etc.), its keyup never arrives — clear
+  // everything on blur so no key can get stuck "down" indefinitely.
+  window.addEventListener("blur", () => {
+    gc.keysDown.clear();
+  });
+
   window.addEventListener("resize", () => {
     resizeCanvases();
     gc.render();
   });
 
   setInterval(() => {
+    // Don't advance the typewriter (or its sound) behind the loading screen —
+    // the loading bar isn't the guide text, so ticking here just burns through
+    // guideReveal silently offscreen and the typing sound starts before any
+    // text is actually being drawn.
+    if (!gc.assetsReady) return;
+
     const totalChars = resolveGuideLines().reduce((sum, line) => sum + line.length, 0);
     if (gc.state.guideReveal < totalChars) {
       gc.state.guideReveal++;

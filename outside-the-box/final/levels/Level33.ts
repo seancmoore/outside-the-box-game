@@ -5,34 +5,90 @@ import { uiScale, roundRect, getGuideTextMetrics } from '../renderer';
 import { freshEntry, drawWinScreen, say, inputOpen, inRect, levelClock, wrong } from './lateralHelpers';
 
 // ── Q33 — Misplaced ───────────────────────────────────────────────────────────
-// "One word on this page is wrong." The paragraph is flawless Institute
-// boilerplate except that the word "because" sits in the middle of a sentence
-// where it makes no sense. The examiner's own remark has the hole it fell out
-// of: "Read it like it matters, ______ it does." Accusing a word costs a heart;
-// dragging the wrong word into his gap costs a heart; dragging "because" down
-// into the remarks hands it back and passes the item. Replaces the old
-// "spot the misspelling" proofreading level.
+// "Some words on this page are wrong." A paragraph of Institute boilerplate has
+// two or three connective words dropped into it at spots where they make no
+// sense — the examiner's own remark has the holes they fell out of, rendered as
+// genuinely blank space (no "______", no underline) so nothing marks where or
+// how many gaps there are until you actually read for them. The paragraph also
+// carries decoys: the same or similar connective words used correctly elsewhere,
+// and — since gaps are matched by exact source position, not just word text —
+// grabbing the right word from the wrong spot fails too. A fresh paragraph,
+// wording, and answer set is drawn at random every time the level is entered.
+// Accusing a word costs a heart; dragging a word into the wrong gap (or the
+// wrong word into any gap) costs a heart; matching every word to its own gap
+// passes the item.
 
-const TEXT =
-  'The Institute of Lateral Cognition certifies candidates on the basis of demonstrated thinking. ' +
-  'Each item is reviewed twice. Results are final. The Institute because issues certificates annually, ' +
-  'and reserves the right to revise any verdict without notice. Candidates who disagree with a verdict ' +
-  'may submit an appeal in writing, which will be read, filed, and forgotten in that order.';
+interface PuzzleTemplate {
+  // Paragraph text, split on spaces. The one occurrence of a word that must be
+  // pulled out is wrapped {{like this}} (trailing punctuation goes outside the
+  // braces); every other occurrence of the same or a similar word is a decoy
+  // left exactly where it belongs.
+  paragraph: string;
+  // The examiner's remark, split around its gaps: segments.length === the
+  // number of gaps + 1, and gap i sits between segments[i] and segments[i+1].
+  segments: string[];
+}
 
-const WORDS = TEXT.split(' ');
-const norm = (word: string) => word.replace(/[^A-Za-z]/g, '').toLowerCase();
-const LOST_INDEX = WORDS.findIndex((word) => norm(word) === 'because');
-
-const PREFIX = 'Quality control. One word on this page is wrong. Read it like it matters, ';
-const GAP    = '______';
-const SUFFIX = ' it does.';
-const LINE1  = PREFIX + GAP + SUFFIX;
+const TEMPLATES: PuzzleTemplate[] = [
+  {
+    paragraph:
+      'The Institute of Lateral Cognition certifies candidates on the basis of demonstrated thinking, ' +
+      'although each item is reviewed twice. Results are final {{because}}, and the Institute reserves ' +
+      'the right to revise any verdict without notice, since appeals {{though}} are read, filed, and ' +
+      'forgotten in that order.',
+    segments: ['Read it like it matters, ', ' it does, ', ' it might not seem worth it.'],
+  },
+  {
+    paragraph:
+      'Every ruling of the Institute is final {{however}}, and stands until formally revised, whereas ' +
+      'amendments require a fresh review. Appeals are read once, filed without comment {{nonetheless}}, ' +
+      'unless the submission itself is late, and forgotten shortly after that.',
+    segments: ['It is final, ', ', it stands, ', ', nothing changes that.'],
+  },
+  {
+    paragraph:
+      'The Institute certifies candidates based on demonstrated thinking, though the standard is rarely ' +
+      'explained. Every verdict is provisional {{yet}}, and may be revised {{still}} without notice, even ' +
+      'though appeals rarely change anything {{regardless}}, since the record is already filed.',
+    segments: ['Not much changes here, ', ' it never does, ', ' nothing much moves, ', ' of what you argue.'],
+  },
+];
 
 const LADDER = [
   'Wrong is not the same as misspelled. Some words are simply not where they belong.',
-  'I seem to be missing one. Look at my remarks. Look at the gap.',
-  'The word because is in your paragraph. It is mine. Drag it down here.',
+  'I seem to be missing a few. Look at my remarks. Look at the gaps.',
+  'Match the word to its own gap, not just any orphan that looks close enough.',
 ];
+
+interface Puzzle33 {
+  words:       string[];   // the paragraph, tokenised
+  lostIndices: number[];   // one WORDS index per gap, in gap order
+  segments:    string[];
+}
+
+const norm = (word: string) => word.replace(/[^A-Za-z]/g, '').toLowerCase();
+
+// Parses a template's {{marker}} tokens into concrete word/index pairs.
+const buildPuzzle = (tpl: PuzzleTemplate): Puzzle33 => {
+  const raw = tpl.paragraph.split(' ');
+  const words: string[] = [];
+  const lostIndices: number[] = [];
+  for (const tok of raw) {
+    const m = tok.match(/^\{\{(.+?)\}\}([.,;:!?]*)$/);
+    if (m) {
+      words.push(m[1] + m[2]);
+      lostIndices.push(words.length - 1);
+    } else {
+      words.push(tok);
+    }
+  }
+  return { words, lostIndices, segments: tpl.segments };
+};
+
+// A blank the same rough width as the word that belongs there — wide enough to
+// read as "something is missing here", not wide enough to spell out the length
+// of the answer.
+const placeholderFor = (word: string) => ' '.repeat(Math.max(4, norm(word).length + 2));
 
 interface WordRect { i: number; text: string; x: number; y: number; w: number; h: number; cx: number; cy: number; }
 interface GapRect { x: number; y: number; w: number; h: number; cy: number; fontPx: number; }
@@ -40,19 +96,35 @@ interface GapRect { x: number; y: number; w: number; h: number; cy: number; font
 let fails33   = 0;
 let drag33: { i: number; x0: number; y0: number; moved: boolean } | null = null;
 let wasDown33 = false;
-let gone33    = false;   // "because" has been lifted out of the paragraph for good
-let filled33  = false;   // the examiner's gap now reads "because"
 let solvedAt33 = 0;
 let hint33    = '';
 let words33: WordRect[] = [];
-let gapRect33: GapRect | null = null;
+let gapRects33: (GapRect | null)[] = [];
+
+let puzzle33:    Puzzle33 = buildPuzzle(TEMPLATES[0]);
+let placeholders33: string[] = [];
+let remarkLine33: string = '';
+let solved33:    boolean[] = [];
+
+const pickPuzzle33 = () => {
+  const tpl = TEMPLATES[Math.floor(Math.random() * TEMPLATES.length)];
+  puzzle33 = buildPuzzle(tpl);
+  placeholders33 = puzzle33.lostIndices.map((idx) => placeholderFor(puzzle33.words[idx]));
+  solved33 = puzzle33.lostIndices.map(() => false);
+  let line = puzzle33.segments[0];
+  for (let gi = 0; gi < puzzle33.lostIndices.length; gi++) {
+    line += placeholders33[gi] + puzzle33.segments[gi + 1];
+  }
+  remarkLine33 = line;
+};
+
 const clock33 = { last: 0, elapsed: 0 };
 
 // The examiner speaks his permanent line; the ladder rung rides underneath it.
 const remark = (gc: GameContext, line: string) => {
   hint33 = line;
-  if (line) say(gc, LINE1, line);
-  else say(gc, LINE1);
+  if (line) say(gc, remarkLine33, line);
+  else say(gc, remarkLine33);
 };
 
 // Deferred by a tick: the release is detected inside the draw, and wrong() ends
@@ -72,72 +144,70 @@ const failed = (gc: GameContext, line?: string) => {
   }, 0);
 };
 
-// ── the examiner's gap, measured inside his remarks ──────────────────────────
+// ── the examiner's gaps, measured inside his remarks ──────────────────────────
 // drawBottomPanel draws remark line 0 with fillText(..., speechW), so an
 // over-long line is condensed to exactly that width; the same factor is applied
-// to the prefix so the gap lands on the underscores the panel actually drew.
-const measureGap = (gc: GameContext): GapRect | null => {
+// here so each gap lands on the blank span the panel actually drew.
+const measureGaps = (gc: GameContext): (GapRect | null)[] => {
   const r = gc.chrome.remarks;
-  if (!r) return null;
+  if (!r) return puzzle33.lostIndices.map(() => null);
   const { ctx, bodyFont } = gc;
   const m = getGuideTextMetrics(ctx);
   ctx.save();
   ctx.font = `${m.fontPx}px ${bodyFont}`;
-  const fullW  = ctx.measureText(LINE1).width;
+  const fullW  = ctx.measureText(remarkLine33).width;
   const squash = fullW > r.w ? r.w / fullW : 1;
-  const preW   = ctx.measureText(PREFIX).width * squash;
-  const gapW   = ctx.measureText(GAP).width * squash;
-  ctx.restore();
   const cy = r.y + m.lineGap / 2;
-  return { x: r.x + preW, y: cy - m.lineGap / 2, w: gapW, h: m.lineGap, cy, fontPx: m.fontPx };
+
+  let prefix = '';
+  const rects = puzzle33.lostIndices.map((_, gi) => {
+    prefix += puzzle33.segments[gi];
+    const preW = ctx.measureText(prefix).width * squash;
+    const placeholder = placeholders33[gi];
+    const gapW = ctx.measureText(placeholder).width * squash;
+    prefix += placeholder;
+    return { x: r.x + preW, y: cy - m.lineGap / 2, w: gapW, h: m.lineGap, cy, fontPx: m.fontPx };
+  });
+  ctx.restore();
+  return rects;
 };
 
-const overGap = (x: number, y: number, s: number) =>
-  !!gapRect33 && inRect(x, y, {
-    x: gapRect33.x - 24 * s, y: gapRect33.y - 18 * s,
-    w: gapRect33.w + 48 * s, h: gapRect33.h + 36 * s,
-  });
+const overGapRect = (x: number, y: number, s: number, g: GapRect) =>
+  inRect(x, y, { x: g.x - 24 * s, y: g.y - 18 * s, w: g.w + 48 * s, h: g.h + 36 * s });
 
-// Painted over the panel: erase the underscores, draw our own rule (or the
-// returned word), then the dragged ghost so it can travel down off the paper.
+// Painted over the panel: erase the panel's blank space, draw any word already
+// returned to its gap, and (only while actively dragging near it) a faint
+// highlight — no persistent rule or underline giving the gap away when idle.
 const paintPanel = (gc: GameContext) => {
   const { ctx, state, displayFont, bodyFont } = gc;
   const t = getTheme(state);
   const s = uiScale(ctx);
-  const g = measureGap(gc);
-  gapRect33 = g;
-  if (g) {
-    const hot = !!drag33 && drag33.moved && overGap(gc.mouseX, gc.mouseY, s);
+  gapRects33 = measureGaps(gc);
+
+  gapRects33.forEach((g, gi) => {
+    if (!g) return;
+    const hot = !!drag33 && drag33.moved && overGapRect(gc.mouseX, gc.mouseY, s, g);
     ctx.save();
-    // erase the literal underscores the panel typed
     ctx.fillStyle = t.panel;
     ctx.fillRect(g.x - 1, g.cy - g.h * 0.42, g.w + 2, g.h * 0.92);
-    if (filled33) {
+    if (solved33[gi]) {
       ctx.fillStyle = t.accent;
       ctx.font = `italic ${g.fontPx}px ${bodyFont}`;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText('because', g.x, g.cy, g.w);
-    } else {
-      if (hot) {
-        ctx.globalAlpha = 0.14;
-        ctx.fillStyle = t.accent;
-        ctx.fillRect(g.x - 3 * s, g.cy - 11 * s, g.w + 6 * s, 19 * s);
-        ctx.globalAlpha = 1;
-      }
-      // once the examiner has pointed at his own remarks, the rule breathes
-      const pulse = fails33 >= 2 ? 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(clock33.elapsed * 3.2)) : 1;
-      ctx.globalAlpha = hot ? 1 : pulse;
-      ctx.fillStyle = hot ? t.accent : t.fgDim;
-      ctx.fillRect(g.x, g.cy + g.fontPx * 0.40, g.w, 2 * s);
+      ctx.fillText(norm(puzzle33.words[puzzle33.lostIndices[gi]]), g.x, g.cy, g.w);
+    } else if (hot) {
+      ctx.globalAlpha = 0.14;
+      ctx.fillStyle = t.accent;
+      ctx.fillRect(g.x - 3 * s, g.cy - 11 * s, g.w + 6 * s, 19 * s);
     }
     ctx.restore();
-  }
+  });
 
   // the lifted word, riding the cursor
   if (drag33 && drag33.moved) {
     const fontPx = Math.round(21 * s);
-    const label = WORDS[drag33.i];
+    const label = puzzle33.words[drag33.i];
     ctx.save();
     ctx.font = `${fontPx}px ${displayFont}`;
     const tw = ctx.measureText(label).width;
@@ -172,12 +242,13 @@ export const drawLevel33 = (gc: GameContext) => {
 
   if (state.levelSubPhase === 'win') {
     gc.afterPanel = paintPanel;
-    drawWinScreen(gc, 'RETURNED.', 'The word was fine. It was in the wrong paragraph. Corporate calls that a typo.', 34);
+    drawWinScreen(gc, 'RETURNED.', 'The words were fine. They were just in the wrong paragraph. Corporate calls that a typo.', 34);
     return;
   }
   if (freshEntry(gc)) {
-    fails33 = 0; drag33 = null; wasDown33 = false; gone33 = false; filled33 = false;
-    solvedAt33 = 0; hint33 = ''; words33 = []; gapRect33 = null;
+    pickPuzzle33();
+    fails33 = 0; drag33 = null; wasDown33 = false;
+    solvedAt33 = 0; hint33 = ''; words33 = []; gapRects33 = [];
     clock33.last = 0; clock33.elapsed = 0;
     remark(gc, '');
   }
@@ -198,7 +269,10 @@ export const drawLevel33 = (gc: GameContext) => {
   const contentW = docW - padX * 2;
   const maxBottom = topBoxY + topBoxHeight - 8 * s;
 
-  const visible = WORDS.map((text, i) => ({ text, i })).filter((entry) => !(gone33 && entry.i === LOST_INDEX));
+  const removedIndices = new Set(puzzle33.lostIndices.filter((_, gi) => solved33[gi]));
+  const visible = puzzle33.words
+    .map((text, i) => ({ text, i }))
+    .filter((entry) => !removedIndices.has(entry.i));
 
   let fontPx = Math.round(21 * s);
   let lines: { text: string; i: number; w: number }[][] = [];
@@ -281,26 +355,37 @@ export const drawLevel33 = (gc: GameContext) => {
     if (drag33 && !gc.mouseDown) {
       const held = drag33;
       drag33 = null;
-      const isLost = held.i === LOST_INDEX;
+      const heldGapIdx = puzzle33.lostIndices.indexOf(held.i);
+      const isAnAnswer = heldGapIdx !== -1;
+
       if (!held.moved) {
         // a bare click accuses the word
-        if (isLost) remark(gc, 'That is the word. It is not wrong. It is lost.');
+        if (isAnAnswer) remark(gc, 'That is one of the missing words. It is not wrong here. It just is not here.');
         else failed(gc);
-      } else if (overGap(gc.mouseX, gc.mouseY, s)) {
-        if (isLost) {
-          gone33 = true;
-          filled33 = true;
-          solvedAt33 = performance.now();
-          gc.sounds.ui('thud');
-          remark(gc, '...Thank you. That is mine.');
-          setTimeout(() => {
-            if (gc.state.currentLevel === 33 && gc.state.levelSubPhase === 'active') {
-              gc.state.levelSubPhase = 'win';
-              gc.render();
+      } else {
+        const overIdx = gapRects33.findIndex((g, gi) => !solved33[gi] && g && overGapRect(gc.mouseX, gc.mouseY, s, g));
+        if (overIdx !== -1) {
+          const needIdx = puzzle33.lostIndices[overIdx];
+          if (held.i === needIdx) {
+            solved33[overIdx] = true;
+            gc.sounds.ui('thud');
+            if (solved33.every(Boolean)) {
+              solvedAt33 = performance.now();
+              remark(gc, '...Thank you. Those are mine.');
+              setTimeout(() => {
+                if (gc.state.currentLevel === 33 && gc.state.levelSubPhase === 'active') {
+                  gc.state.levelSubPhase = 'win';
+                  gc.render();
+                }
+              }, 900);
+            } else {
+              remark(gc, 'That one. Keep looking for the rest.');
             }
-          }, 900);
-        } else {
-          failed(gc, 'That is not my word.');
+          } else if (isAnAnswer) {
+            failed(gc, 'Right idea. Wrong gap.');
+          } else {
+            failed(gc, 'That is not my word.');
+          }
         }
       }
     }
@@ -314,14 +399,12 @@ export const drawLevel33 = (gc: GameContext) => {
   (gc as unknown as { lv?: Record<string, unknown> }).lv = {
     fails: fails33,
     hint: hint33,
-    dragging: drag33 ? WORDS[drag33.i] : '',
+    dragging: drag33 ? puzzle33.words[drag33.i] : '',
     moved: !!drag33 && drag33.moved,
-    gone: gone33,
-    filled: filled33,
+    solved: solved33.slice(),
     elapsed: clock33.elapsed,
-    lostIndex: LOST_INDEX,
-    lostWord: words33.find((wr) => wr.i === LOST_INDEX) ?? null,
+    lostIndices: puzzle33.lostIndices,
     firstWord: words33[0] ?? null,
-    gap: gapRect33,
+    gaps: gapRects33,
   };
 };

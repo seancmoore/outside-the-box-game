@@ -80,6 +80,10 @@ export class SoundManager {
     for (const audio of this.loopedAudio.values()) {
       audio.volume = this.masterVolume;
     }
+
+    if (this.sirenGain && this.audioCtx) {
+      this.sirenGain.gain.setValueAtTime(Math.max(0.0002, 0.11 * this.masterVolume), this.audioCtx.currentTime);
+    }
   }
 
   public getMasterVolume() {
@@ -110,6 +114,101 @@ export class SoundManager {
 
   private clampVolume(volume: number) {
     return Math.min(1, Math.max(0, volume));
+  }
+
+  // ── Procedural stress alarm (Q17) — a wailing siren, no asset file ───────────
+  private sirenOsc:  OscillatorNode | null = null;
+  private sirenLFO:  OscillatorNode | null = null;
+  private sirenGain: GainNode | null = null;
+
+  public startSiren() {
+    const ctx = this.ensureCtx();
+    if (!ctx || this.sirenOsc) return;
+
+    const out = ctx.createGain();
+    out.gain.value = 0.0001;
+    out.connect(ctx.destination);
+    out.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.11 * this.masterVolume), ctx.currentTime + 0.15);
+
+    const osc = ctx.createOscillator();
+    osc.type = "sawtooth";
+    osc.frequency.value = 760;
+
+    // LFO sweeps the carrier frequency up/down — classic two-tone wail
+    const lfo = ctx.createOscillator();
+    lfo.type = "sine";
+    lfo.frequency.value = 1.3;   // wails per second
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 260;    // sweep depth in Hz
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc.frequency);
+
+    osc.connect(out);
+    osc.start();
+    lfo.start();
+
+    this.sirenOsc  = osc;
+    this.sirenLFO  = lfo;
+    this.sirenGain = out;
+  }
+
+  public stopSiren() {
+    const ctx = this.audioCtx;
+    if (!ctx || !this.sirenOsc || !this.sirenGain) return;
+
+    const out = this.sirenGain;
+    const t    = ctx.currentTime;
+    out.gain.cancelScheduledValues(t);
+    out.gain.setValueAtTime(Math.max(0.0002, out.gain.value), t);
+    out.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+
+    const osc = this.sirenOsc, lfo = this.sirenLFO;
+    setTimeout(() => { try { osc.stop(); lfo?.stop(); } catch { /* already stopped */ } }, 150);
+
+    this.sirenOsc  = null;
+    this.sirenLFO  = null;
+    this.sirenGain = null;
+  }
+
+  // ── Procedural stress voice (Q17) — browser TTS shouting urgency lines ───────
+  // No voice-over asset exists yet; this stands in using the Web Speech API so
+  // the pressure is there immediately. Swap for a recorded line later by
+  // replacing this with a normal SOUND_PATHS entry + play({loop:true}) if a
+  // real "quick quick press it!" clip gets added.
+  private shoutTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly SHOUT_LINES = [
+    "Quick! Quick!",
+    "Press it! Hurry!",
+    "Do it now!",
+    "Come on, press it!",
+    "You're running out of time!",
+  ];
+
+  public startShouting() {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    if (this.shoutTimer !== null) return;
+
+    const say = () => {
+      if (this.masterVolume <= 0) return;
+      const line = this.SHOUT_LINES[Math.floor(Math.random() * this.SHOUT_LINES.length)];
+      const u = new SpeechSynthesisUtterance(line);
+      u.rate   = 1.35;
+      u.pitch  = 1.3;
+      u.volume = this.clampVolume(this.masterVolume);
+      window.speechSynthesis.speak(u);
+    };
+    say();
+    this.shoutTimer = setInterval(say, 1600);
+  }
+
+  public stopShouting() {
+    if (this.shoutTimer !== null) {
+      clearInterval(this.shoutTimer);
+      this.shoutTimer = null;
+    }
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
   }
 
   // ── Procedural UI sound effects (WebAudio synth — no asset files) ────────────

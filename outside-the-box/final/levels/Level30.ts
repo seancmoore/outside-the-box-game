@@ -40,21 +40,6 @@ export const drawLevel30 = (gc: GameContext) => {
     if (slip30.i >= CUT) { slip30.phase = 2; const base = A.slice(0, A.length - CUT); state.guideLines = [base + B]; state.guideTarget = base + B; state.guideReveal = base.length; }
   }
 
-  // HALFWAY seal
-  const sr = Math.min(topBoxWidth, topBoxHeight) * 0.11;
-  const sx = topBoxX + topBoxWidth - sr - 34 * s, sy = topBoxY + sr + 22 * s;
-  ctx.save();
-  ctx.translate(sx, sy); ctx.rotate(-12 * Math.PI / 180);
-  ctx.strokeStyle = t.seal; ctx.lineWidth = 2.5; ctx.setLineDash([4, 2.4]);
-  ctx.beginPath(); ctx.arc(0, 0, sr, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
-  ctx.fillStyle = state.darkMode ? 'rgba(212,176,90,0.12)' : 'rgba(176,137,47,0.10)';
-  ctx.beginPath(); ctx.arc(0, 0, sr * 0.8, 0, Math.PI * 2); ctx.fill();
-  ctx.lineWidth = 1; ctx.stroke();
-  ctx.fillStyle = t.seal; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.font = `bold ${Math.round(sr * 0.24)}px ${monoFont}`; ctx.fillText('HALFWAY', 0, -sr * 0.08);
-  ctx.font = `italic ${Math.round(sr * 0.2)}px ${displayFont}`; ctx.fillText('25 of 50', 0, sr * 0.22);
-  ctx.restore();
-
   ctx.fillStyle = t.fgDim;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.font = `${Math.round(13 * s)}px ${monoFont}`;

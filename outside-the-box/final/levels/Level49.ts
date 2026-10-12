@@ -101,11 +101,15 @@ export const drawLevel49 = (gc: GameContext) => {
   const dialW  = topBoxWidth * 0.11901;
   const gap    = topBoxWidth * 0.04952;
   const btnH   = Math.round(30 * s);
-  const digitH = Math.round(68 * s);
+  const digitH = Math.round(58 * s);
   const pad    = Math.round(4 * s);
   const totW   = dialW * 3 + gap * 2;
   const dialsX = cx - totW / 2;
-  const upY    = topBoxY + topBoxHeight * 0.47;
+  // Started a bit higher (0.43 vs the old 0.47) and the digit window shrunk a
+  // touch (58 vs 68px) — together they keep the dial block from running into
+  // the SUBMIT button below it, which the old fixed 0.84 fraction did not
+  // reliably clear.
+  const upY    = topBoxY + topBoxHeight * 0.43;
   const digY   = upY + btnH + pad;
   const dnY    = digY + digitH + pad;
 
@@ -189,7 +193,10 @@ export const drawLevel49 = (gc: GameContext) => {
   // ── submit ────────────────────────────────────────────────────────────────
   const subW = topBoxWidth * 0.2381;
   const subH = Math.round(48 * s);
-  drawChoice(gc, 'SUBMIT', cx - subW / 2, topBoxY + topBoxHeight * 0.84, subW, subH, () => {
+  // Anchored to the bottom of the play area (not a fixed fraction of
+  // topBoxHeight) so it stays clear of the dial row above it on every viewport.
+  const subY = topBoxY + topBoxHeight - 8 * s - subH;
+  drawChoice(gc, 'SUBMIT', cx - subW / 2, subY, subW, subH, () => {
     if (!inputOpen(gc)) return;
     if (digits49.every((v, i) => v === code49[i])) {
       state.levelSubPhase = 'win';
